@@ -92,6 +92,9 @@ cargo test --workspace
 cargo run -p tsync -- doctor
 # expect: a report ending in "N passed", exit status 0
 #         any FAIL line prints the exact command that fixes it
+
+cargo run -p tsync -- audit
+# expect: a count of intact / partial torrents; changes nothing on disk
 ```
 
 `rust-toolchain.toml` pins the compiler. The first `cargo` invocation

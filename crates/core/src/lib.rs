@@ -11,3 +11,5 @@
 //! tool — depends on this and nothing else.
 
 pub mod bencode;
+pub mod metainfo;
+pub mod resume;

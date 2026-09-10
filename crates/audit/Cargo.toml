@@ -1,6 +1,6 @@
 [package]
-name = "tsync-core"
-description = "Pure, I/O-free core: bencode, metainfo, path mapping, and piece verification."
+name = "tsync-audit"
+description = "Inventory a torrent library: parse pairs, stat files, classify."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,11 +8,12 @@ rust-version.workspace = true
 repository.workspace = true
 
 [dependencies]
-sha1.workspace = true
 thiserror.workspace = true
+tsync-core = { path = "../core" }
 
 [dev-dependencies]
-proptest.workspace = true
+tempfile.workspace = true
+tsync-fixtures = { path = "../fixtures" }
 
 [lints]
 workspace = true

@@ -479,8 +479,19 @@ name = "tsync"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "tsync-audit",
  "tsync-core",
  "tsync-doctor",
+]
+
+[[package]]
+name = "tsync-audit"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror",
+ "tsync-core",
+ "tsync-fixtures",
 ]
 
 [[package]]
@@ -488,6 +499,7 @@ name = "tsync-core"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "sha1",
  "thiserror",
 ]
 

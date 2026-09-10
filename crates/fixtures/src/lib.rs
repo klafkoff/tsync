@@ -27,7 +27,7 @@ pub enum Error {
 }
 
 /// How the on-disk files relate to what the resume data claims.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Presence {
     /// Every file is on disk at its full length.
     Complete,
@@ -39,6 +39,18 @@ pub enum Presence {
     ClaimsCompleteButMissing {
         /// How many leading files to omit.
         count: usize,
+    },
+    /// Every file exists, but file `index` is only `written` bytes long.
+    Truncated {
+        /// Which file is short.
+        index: usize,
+        /// Bytes actually written.
+        written: u64,
+    },
+    /// Listed files are priority 0 and are not written; the rest are present.
+    Skipped {
+        /// File indices the user "deselected".
+        indices: Vec<usize>,
     },
 }
 
@@ -119,6 +131,45 @@ impl Builder {
         self
     }
 
+    /// Adds a torrent whose file `index` is written short of its declared size.
+    #[must_use]
+    pub fn truncated(
+        mut self,
+        name: impl Into<String>,
+        save_path: impl Into<String>,
+        files: &[(&str, u64)],
+        index: usize,
+        written: u64,
+    ) -> Self {
+        self.torrents.push(TorrentSpec {
+            name: name.into(),
+            save_path: save_path.into(),
+            files: file_specs(files),
+            presence: Presence::Truncated { index, written },
+        });
+        self
+    }
+
+    /// Adds a torrent with deselected files that are not on disk.
+    #[must_use]
+    pub fn skipped(
+        mut self,
+        name: impl Into<String>,
+        save_path: impl Into<String>,
+        files: &[(&str, u64)],
+        indices: &[usize],
+    ) -> Self {
+        self.torrents.push(TorrentSpec {
+            name: name.into(),
+            save_path: save_path.into(),
+            files: file_specs(files),
+            presence: Presence::Skipped {
+                indices: indices.to_vec(),
+            },
+        });
+        self
+    }
+
     /// Adds a torrent whose resume data claims complete and whose first
     /// `missing` files are not on disk.
     #[must_use]
@@ -194,7 +245,7 @@ fn write_torrent(
         ),
         (b"info", info),
     ]);
-    let resume = resume_dict(&spec);
+    let resume = resume_dict(&spec, payload.len());
 
     let torrent_path = bt_backup.join(format!("{infohash}.torrent"));
     let resume_path = bt_backup.join(format!("{infohash}.fastresume"));
@@ -241,15 +292,51 @@ fn info_dict(spec: &TorrentSpec, payload: &[u8]) -> Value {
     ])
 }
 
-fn resume_dict(spec: &TorrentSpec) -> Value {
-    dict([
-        (b"paused".as_slice(), Value::Integer(1)),
-        (b"qBt-downloadPath", bytes(spec.save_path.as_bytes())),
-        (b"qBt-savePath", bytes(spec.save_path.as_bytes())),
-        (b"save_path", bytes(spec.save_path.as_bytes())),
-        (b"total_downloaded", Value::Integer(0)),
-        (b"total_uploaded", Value::Integer(0)),
-    ])
+fn resume_dict(spec: &TorrentSpec, payload_len: usize) -> Value {
+    let mut map = BTreeMap::new();
+    map.insert(b"paused".to_vec(), Value::Integer(1));
+    map.insert(
+        b"pieces".to_vec(),
+        Value::Bytes(all_ones_bitfield(piece_count(payload_len))),
+    );
+    map.insert(
+        b"qBt-downloadPath".to_vec(),
+        bytes(spec.save_path.as_bytes()),
+    );
+    map.insert(b"qBt-savePath".to_vec(), bytes(spec.save_path.as_bytes()));
+    map.insert(b"save_path".to_vec(), bytes(spec.save_path.as_bytes()));
+    map.insert(b"total_downloaded".to_vec(), Value::Integer(0));
+    map.insert(b"total_uploaded".to_vec(), Value::Integer(0));
+
+    if let Presence::Skipped { indices } = &spec.presence {
+        let priorities = (0..spec.files.len())
+            .map(|index| Value::Integer(i64::from(!indices.contains(&index))))
+            .collect();
+        map.insert(b"file_priority".to_vec(), Value::List(priorities));
+    }
+
+    Value::Dict(map)
+}
+
+fn piece_count(payload_len: usize) -> usize {
+    if payload_len == 0 {
+        1
+    } else {
+        payload_len.div_ceil(usize::try_from(PIECE_LENGTH).expect("piece length fits usize"))
+    }
+}
+
+fn all_ones_bitfield(piece_count: usize) -> Vec<u8> {
+    if piece_count == 0 {
+        return Vec::new();
+    }
+    let mut field = vec![0xff_u8; piece_count.div_ceil(8)];
+    let rem = piece_count % 8;
+    if rem != 0 {
+        let last = field.len() - 1;
+        field[last] = 0xff_u8 << (8 - rem);
+    }
+    field
 }
 
 fn path_list(relative: &str) -> Value {
@@ -300,13 +387,8 @@ fn piece_hashes(payload: &[u8]) -> Vec<u8> {
 }
 
 fn write_payload(data_root: &Path, spec: &TorrentSpec, index: usize) -> Result<(), Error> {
-    let skip = match spec.presence {
-        Presence::Complete => 0,
-        Presence::ClaimsCompleteButMissing { count } => count,
-    };
-
     for (file_ix, file) in spec.files.iter().enumerate() {
-        if file_ix < skip {
+        if should_omit(spec, file_ix) {
             continue;
         }
         let dest = data_root
@@ -316,14 +398,26 @@ fn write_payload(data_root: &Path, spec: &TorrentSpec, index: usize) -> Result<(
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
         }
+        let length = match spec.presence {
+            Presence::Truncated { index, written } if index == file_ix => written,
+            _ => file.length,
+        };
         let bytes = file_bytes(
             index,
             file_ix,
-            usize::try_from(file.length).expect("fixture files fit in memory"),
+            usize::try_from(length).expect("fixture files fit in memory"),
         );
         fs::write(dest, bytes)?;
     }
     Ok(())
+}
+
+fn should_omit(spec: &TorrentSpec, file_ix: usize) -> bool {
+    match &spec.presence {
+        Presence::Complete | Presence::Truncated { .. } => false,
+        Presence::ClaimsCompleteButMissing { count } => file_ix < *count,
+        Presence::Skipped { indices } => indices.contains(&file_ix),
+    }
 }
 
 fn infohash_hex(info: &Value) -> String {
