@@ -1,0 +1,20 @@
+[package]
+name = "tsync-plan"
+description = "Derive a path mapping and batch plan from an audit manifest."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tsync-audit = { path = "../audit" }
+tsync-core = { path = "../core" }
+
+[dev-dependencies]
+tempfile.workspace = true
+tsync-fixtures = { path = "../fixtures" }
+
+[lints]
+workspace = true

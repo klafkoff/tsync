@@ -16,6 +16,7 @@ clap.workspace = true
 tsync-core = { path = "../core" }
 tsync-audit = { path = "../audit" }
 tsync-doctor = { path = "../doctor" }
+tsync-plan = { path = "../plan" }
 
 [lints]
 workspace = true

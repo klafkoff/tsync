@@ -482,6 +482,7 @@ dependencies = [
  "tsync-audit",
  "tsync-core",
  "tsync-doctor",
+ "tsync-plan",
 ]
 
 [[package]]
@@ -515,6 +516,17 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tsync-core",
+]
+
+[[package]]
+name = "tsync-plan"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror",
+ "tsync-audit",
+ "tsync-core",
+ "tsync-fixtures",
 ]
 
 [[package]]

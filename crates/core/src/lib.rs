@@ -12,4 +12,5 @@
 
 pub mod bencode;
 pub mod metainfo;
+pub mod pathmap;
 pub mod resume;

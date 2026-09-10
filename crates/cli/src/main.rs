@@ -1,11 +1,12 @@
 //! Move a torrent library between machines without re-downloading it.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use tsync_audit::Options;
 use tsync_doctor::{Host, Report, checks};
+use tsync_plan::DEFAULT_BUDGET;
 
 /// tsync CLI
 #[derive(Parser)]
@@ -32,6 +33,21 @@ enum Commands {
         #[arg(long)]
         data_root: Option<PathBuf>,
     },
+    /// Derive the path mapping and batch plan. Dry-run: writes nothing.
+    Plan {
+        /// Destination data root the save paths will be rewritten to.
+        #[arg(long)]
+        to: PathBuf,
+        /// qBittorrent `BT_backup` directory. Blank = per-OS default.
+        #[arg(long)]
+        bt_backup: Option<PathBuf>,
+        /// Resolve save paths relative to this directory (tests / relocated data).
+        #[arg(long)]
+        data_root: Option<PathBuf>,
+        /// Soft batch budget in GiB. A larger torrent becomes its own batch.
+        #[arg(long, default_value_t = 4)]
+        budget_gib: u64,
+    },
 }
 
 fn main() -> ExitCode {
@@ -43,6 +59,12 @@ fn main() -> ExitCode {
             bt_backup,
             data_root,
         } => audit(bt_backup, data_root),
+        Commands::Plan {
+            to,
+            bt_backup,
+            data_root,
+            budget_gib,
+        } => plan(&to, bt_backup, data_root, budget_gib),
     }
 }
 
@@ -65,31 +87,71 @@ fn doctor(list: bool) -> ExitCode {
 }
 
 fn audit(bt_backup: Option<PathBuf>, data_root: Option<PathBuf>) -> ExitCode {
-    let Some(bt_backup) = bt_backup.or_else(default_bt_backup) else {
-        eprintln!("audit: cannot locate BT_backup (home directory unknown)");
-        eprintln!("       pass --bt-backup PATH");
-        return ExitCode::FAILURE;
-    };
-
-    match tsync_audit::run(&Options {
-        bt_backup,
-        data_root,
-    }) {
+    match run_audit(bt_backup, data_root) {
         Ok(manifest) => {
             print!("{}", manifest.render());
             ExitCode::SUCCESS
         }
+        Err(code) => code,
+    }
+}
+
+fn plan(
+    to: &Path,
+    bt_backup: Option<PathBuf>,
+    data_root: Option<PathBuf>,
+    budget_gib: u64,
+) -> ExitCode {
+    let dest = to.to_string_lossy();
+    if dest.is_empty() || dest == "/" {
+        eprintln!("plan: --to must be a real destination root, not /");
+        return ExitCode::FAILURE;
+    }
+
+    let manifest = match run_audit(bt_backup, data_root) {
+        Ok(manifest) => manifest,
+        Err(code) => return code,
+    };
+
+    let budget = budget_gib.saturating_mul(1 << 30);
+    let budget = if budget == 0 { DEFAULT_BUDGET } else { budget };
+
+    match tsync_plan::build(&manifest, dest.as_ref(), budget) {
+        Ok(plan) => {
+            print!("{}", plan.render());
+            ExitCode::SUCCESS
+        }
         Err(error) => {
-            eprintln!("audit: {error}");
-            if error.is_permission_denied() {
-                eprintln!(
-                    "       on macOS this is usually Full Disk Access: \
-                     System Settings > Privacy & Security, then restart the terminal"
-                );
-            }
+            eprintln!("plan: {error}");
             ExitCode::FAILURE
         }
     }
+}
+
+fn run_audit(
+    bt_backup: Option<PathBuf>,
+    data_root: Option<PathBuf>,
+) -> Result<tsync_audit::Manifest, ExitCode> {
+    let Some(bt_backup) = bt_backup.or_else(default_bt_backup) else {
+        eprintln!("cannot locate BT_backup (home directory unknown)");
+        eprintln!("pass --bt-backup PATH");
+        return Err(ExitCode::FAILURE);
+    };
+
+    tsync_audit::run(&Options {
+        bt_backup,
+        data_root,
+    })
+    .map_err(|error| {
+        eprintln!("audit: {error}");
+        if error.is_permission_denied() {
+            eprintln!(
+                "       on macOS this is usually Full Disk Access: \
+                 System Settings > Privacy & Security, then restart the terminal"
+            );
+        }
+        ExitCode::FAILURE
+    })
 }
 
 fn default_bt_backup() -> Option<PathBuf> {

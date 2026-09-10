@@ -95,6 +95,9 @@ cargo run -p tsync -- doctor
 
 cargo run -p tsync -- audit
 # expect: a count of intact / partial torrents; changes nothing on disk
+
+cargo run -p tsync -- plan --to /opt/seedbox/data
+# expect: a mapping, batch table, and excluded list; writes nothing
 ```
 
 `rust-toolchain.toml` pins the compiler. The first `cargo` invocation

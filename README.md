@@ -9,7 +9,7 @@ downloading 60 GB you are holding in your hand.
 
 `tsync` does that, and refuses to do anything unsafe along the way.
 
-> **Status: in development.** `tsync doctor` and `tsync audit` run. The rest
+> **Status: in development.** `tsync doctor`, `audit`, and `plan` run. The rest
 > of the pipeline is not available yet.
 
 To build from source and confirm the local environment, copy the blocks in
