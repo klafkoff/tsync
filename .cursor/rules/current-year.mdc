@@ -1,0 +1,13 @@
+---
+description: Use the current year for recency in web searches
+alwaysApply: true
+---
+
+# Current year
+
+- Treat the current year for this workspace as **2026**. Prefer the date from
+  `user_info` when it is present, since it is authoritative.
+- When adding a year keyword to `WebSearch` or similar for freshness, use
+  **2026** — never 2024 or 2025 unless a historical year is explicitly wanted.
+- Do not fall back on training-cutoff years when the goal is "current",
+  "latest", or "recent".

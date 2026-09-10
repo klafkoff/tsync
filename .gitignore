@@ -1,0 +1,53 @@
+# --- Local configuration (never commit) ---
+tsync.yaml
+.env
+.env.*
+!.env.example
+.tsync-forbidden.local
+
+# --- Runtime artifacts (contain torrent names, infohashes, save paths) ---
+manifest.json
+*.manifest.json
+staging/
+out/
+logs/
+*.log
+
+# --- Torrent data (contains tracker passkeys in announce URLs) ---
+*.torrent
+*.fastresume
+BT_backup/
+
+# --- Build output ---
+bin/
+dist/
+tsync
+*.exe
+
+# --- Go ---
+*.test
+*.out
+coverage.*
+vendor/
+
+# --- Rust ---
+target/
+**/*.rs.bk
+
+# --- Python (research tooling) ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# --- Packet captures (contain real addresses, infohashes, and payloads) ---
+*.pcap
+*.pcapng
+*.cap
+captures/
+
+# --- Editor / OS ---
+.DS_Store
+.idea/
+*.swp
