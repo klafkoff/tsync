@@ -48,6 +48,24 @@ enum Commands {
         #[arg(long, default_value_t = 4)]
         budget_gib: u64,
     },
+    /// Write rewritten resume data to a staging directory. Never touches originals.
+    Rewrite {
+        /// Destination data root the save paths will be rewritten to.
+        #[arg(long)]
+        to: PathBuf,
+        /// Directory that receives copied `.torrent` files and new resumes.
+        #[arg(long)]
+        staging: PathBuf,
+        /// qBittorrent `BT_backup` directory. Blank = per-OS default.
+        #[arg(long)]
+        bt_backup: Option<PathBuf>,
+        /// Resolve save paths relative to this directory (tests / relocated data).
+        #[arg(long)]
+        data_root: Option<PathBuf>,
+        /// Soft batch budget in GiB, same as `plan`.
+        #[arg(long, default_value_t = 4)]
+        budget_gib: u64,
+    },
 }
 
 fn main() -> ExitCode {
@@ -65,6 +83,13 @@ fn main() -> ExitCode {
             data_root,
             budget_gib,
         } => plan(&to, bt_backup, data_root, budget_gib),
+        Commands::Rewrite {
+            to,
+            staging,
+            bt_backup,
+            data_root,
+            budget_gib,
+        } => rewrite(&to, &staging, bt_backup, data_root, budget_gib),
     }
 }
 
@@ -123,6 +148,50 @@ fn plan(
         }
         Err(error) => {
             eprintln!("plan: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn rewrite(
+    to: &Path,
+    staging: &Path,
+    bt_backup: Option<PathBuf>,
+    data_root: Option<PathBuf>,
+    budget_gib: u64,
+) -> ExitCode {
+    let dest = to.to_string_lossy();
+    if dest.is_empty() || dest == "/" {
+        eprintln!("rewrite: --to must be a real destination root, not /");
+        return ExitCode::FAILURE;
+    }
+
+    let Some(bt_backup) = bt_backup.or_else(default_bt_backup) else {
+        eprintln!("cannot locate BT_backup (home directory unknown)");
+        eprintln!("pass --bt-backup PATH");
+        return ExitCode::FAILURE;
+    };
+
+    let budget = budget_gib.saturating_mul(1 << 30);
+    let budget = if budget == 0 { DEFAULT_BUDGET } else { budget };
+
+    match tsync_rewrite::run(&tsync_rewrite::Options {
+        bt_backup,
+        staging: staging.to_path_buf(),
+        dest: dest.into_owned(),
+        budget,
+        data_root,
+    }) {
+        Ok(report) => {
+            print!("{}", report.render());
+            if report.is_complete() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => {
+            eprintln!("rewrite: {error}");
             ExitCode::FAILURE
         }
     }

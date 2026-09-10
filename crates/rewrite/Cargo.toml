@@ -1,0 +1,21 @@
+[package]
+name = "tsync-rewrite"
+description = "Write rewritten resume data to a staging directory. Never touches originals."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tsync-audit = { path = "../audit" }
+tsync-core = { path = "../core" }
+tsync-plan = { path = "../plan" }
+
+[dev-dependencies]
+tempfile.workspace = true
+tsync-fixtures = { path = "../fixtures" }
+
+[lints]
+workspace = true

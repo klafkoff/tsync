@@ -98,6 +98,12 @@ cargo run -p tsync -- audit
 
 cargo run -p tsync -- plan --to /opt/seedbox/data
 # expect: a mapping, batch table, and excluded list; writes nothing
+
+mkdir -p /tmp/tsync-staging
+cargo run -p tsync -- rewrite --to /opt/seedbox/data --staging /tmp/tsync-staging
+# expect: copied .torrent files and new .fastresume files under staging
+#         originals in BT_backup are unchanged
+#         fails if qBittorrent is running (lockfile)
 ```
 
 `rust-toolchain.toml` pins the compiler. The first `cargo` invocation
