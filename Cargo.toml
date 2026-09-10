@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/doctor", "crates/cli"]
+members = ["crates/core", "crates/doctor", "crates/fixtures", "crates/cli"]
 
 [workspace.package]
 version = "0.1.0"
@@ -13,6 +13,8 @@ repository = "https://github.com/klafkoff/tsync"
 thiserror = "2"
 proptest = "1"
 clap = { version = "4", features = ["derive"] }
+sha1 = "0.10"
+tempfile = "3"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

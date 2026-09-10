@@ -9,9 +9,12 @@ downloading 60 GB you are holding in your hand.
 
 `tsync` does that, and refuses to do anything unsafe along the way.
 
-> **Status: in development.** The design is complete and documented; the
-> implementation is in progress. Commands described below are not all available
-> yet. Watch releases rather than cloning `main` if you want something that runs.
+> **Status: in development.** `tsync doctor` runs and checks this machine.
+> The other commands are not available yet. Watch releases rather than cloning
+> `main` if you want a complete tool.
+
+To build from source and confirm the local environment, copy the blocks in
+[docs/setup.md](docs/setup.md).
 
 ---
 
@@ -64,14 +67,16 @@ the two agree.
 ## Requirements
 
 - GNU `rsync` 3.1 or newer on both ends. **macOS ships `openrsync`, which will
-  not work**; install real rsync (`brew install rsync`).
+  not work.** `brew install rsync` puts the real binary on disk; it must also
+  come first on `PATH` (Homebrew does not replace `/usr/bin/rsync`).
 - SSH key access to the destination.
 - A supported client. qBittorrent 4.x and 5.x today; the client layer is an
   interface, and adding another is a contained change.
 
 Run `tsync doctor` before anything else. It probes for capabilities rather than
 parsing version strings, and every failure it reports comes with the exact
-command that fixes it.
+command that fixes it. Copy-paste setup, including the PATH trap on macOS, is
+in [docs/setup.md](docs/setup.md).
 
 ---
 

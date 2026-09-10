@@ -42,9 +42,34 @@ pub(crate) fn check(env: &dyn Environment) -> Outcome {
         return Outcome::pass(identity.describe());
     }
 
-    Outcome::fail(identity.describe())
-        .expected(REQUIREMENT)
-        .fix(install_hint(env.platform()))
+    // Homebrew installs GNU rsync but does not replace /usr/bin/rsync.
+    // If PATH still prefers openrsync, the capability probe fails even
+    // though the right binary is already on the disk.
+    let outcome = Outcome::fail(identity.describe()).expected(REQUIREMENT);
+    if let Some(path) = gnu_rsync_elsewhere(env) {
+        let bin_dir = std::path::Path::new(&path)
+            .parent()
+            .map_or_else(|| path.clone(), |parent| parent.display().to_string());
+        return outcome.fix(format!(
+            "GNU rsync is at {path}; put {bin_dir} ahead of /usr/bin on PATH"
+        ));
+    }
+
+    outcome.fix(install_hint(env.platform()))
+}
+
+/// Well-known locations Homebrew uses, tried only when `rsync` on PATH failed.
+fn gnu_rsync_elsewhere(env: &dyn Environment) -> Option<String> {
+    const CANDIDATES: &[&str] = &["/opt/homebrew/bin/rsync", "/usr/local/bin/rsync"];
+    for path in CANDIDATES {
+        if env
+            .run(path, &["--info=help"])
+            .is_ok_and(|probe| probe.succeeded())
+        {
+            return Some((*path).to_owned());
+        }
+    }
+    None
 }
 
 fn install_hint(platform: Platform) -> &'static str {

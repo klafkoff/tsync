@@ -86,6 +86,24 @@ fn rsync_fails_on_genuinely_old_gnu_rsync() {
 }
 
 #[test]
+fn rsync_points_at_homebrew_when_path_still_has_openrsync() {
+    let env = Fake::new(Platform::MacOs)
+        .command("rsync --version", OPENRSYNC)
+        .command("/opt/homebrew/bin/rsync --info=help", "Use OPT or ALL");
+
+    let outcome = run("rsync", &env);
+
+    assert_eq!(outcome.status, Status::Fail);
+    assert!(
+        outcome
+            .remediation
+            .as_deref()
+            .is_some_and(|fix| fix.contains("/opt/homebrew/bin") && fix.contains("PATH")),
+        "when GNU rsync is already installed, say so instead of 'brew install'"
+    );
+}
+
+#[test]
 fn rsync_fails_when_absent() {
     let env = Fake::new(Platform::MacOs).missing("rsync");
 
