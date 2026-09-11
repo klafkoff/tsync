@@ -24,13 +24,17 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v5
-      # Transfer tests invoke GNU rsync. macOS runners ship openrsync.
+      # Transfer tests invoke GNU rsync. macOS runners ship openrsync
+      # at /usr/bin/rsync; brew's prefix is the one that must win.
       - name: GNU rsync
         if: runner.os == 'macOS'
         run: |
           brew install rsync
-          echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
-          echo "/usr/local/bin" >> "$GITHUB_PATH"
+          PREFIX="$(brew --prefix)"
+          echo "${PREFIX}/bin" >> "$GITHUB_PATH"
+          echo "TSYNC_RSYNC=${PREFIX}/bin/rsync" >> "$GITHUB_ENV"
+          "${PREFIX}/bin/rsync" --version
+          "${PREFIX}/bin/rsync" --info=help >/dev/null
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

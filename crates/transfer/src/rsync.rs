@@ -66,13 +66,36 @@ fn split_remote(spec: &str) -> Option<(&str, &str)> {
 }
 
 pub(crate) fn resolve_binary() -> Result<PathBuf, String> {
-    const CANDIDATES: &[&str] = &["rsync", "/opt/homebrew/bin/rsync", "/usr/local/bin/rsync"];
-    for candidate in CANDIDATES {
-        if is_gnu(Path::new(candidate)) {
-            return Ok(PathBuf::from(candidate));
+    let mut candidates = Vec::new();
+    if let Ok(explicit) = std::env::var("TSYNC_RSYNC") {
+        candidates.push(PathBuf::from(explicit));
+    }
+    if let Some(brew) = brew_rsync() {
+        candidates.push(brew);
+    }
+    candidates.push(PathBuf::from("/opt/homebrew/bin/rsync"));
+    candidates.push(PathBuf::from("/usr/local/bin/rsync"));
+    candidates.push(PathBuf::from("rsync"));
+    for candidate in &candidates {
+        if is_gnu(candidate) {
+            return Ok(candidate.clone());
         }
     }
     Err("need GNU rsync >= 3.1.0 (for --info=progress2); run `tsync doctor`".to_owned())
+}
+
+fn brew_rsync() -> Option<PathBuf> {
+    let output = Command::new("brew")
+        .arg("--prefix")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let prefix = String::from_utf8(output.stdout).ok()?;
+    Some(PathBuf::from(prefix.trim()).join("bin/rsync"))
 }
 
 fn is_gnu(path: &Path) -> bool {
@@ -226,13 +249,19 @@ pub(crate) fn copy_relatives(
     cmd.arg("--")
         .arg(slash_dir_str(&from.rsync_url()))
         .arg(slash_dir_str(&to.rsync_url()));
-    let status = cmd.status();
+    let output = cmd.output();
     let _ = fs::remove_file(&list);
-    let status = status.map_err(|error| format!("rsync: {error}"))?;
-    if status.success() {
+    let output = output.map_err(|error| format!("rsync: {error}"))?;
+    if output.status.success() {
         Ok(())
     } else {
-        Err(format!("rsync exited {status}"))
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr.trim();
+        if stderr.is_empty() {
+            Err(format!("rsync exited {}", output.status))
+        } else {
+            Err(format!("rsync exited {}: {stderr}", output.status))
+        }
     }
 }
 
@@ -245,12 +274,12 @@ fn slash_dir_str(spec: &str) -> String {
 }
 
 fn write_files_from(files: &[PathBuf]) -> io::Result<PathBuf> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     let path = std::env::temp_dir().join(format!(
         "tsync-files-from-{}-{}.from0",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos())
+        NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     let mut out = fs::File::create(&path)?;
     for file in files {
@@ -293,6 +322,12 @@ mod tests {
                 path: "/data".into(),
             }
         );
+    }
+
+    #[test]
+    fn resolve_binary_finds_gnu_rsync() {
+        let path = resolve_binary().expect("GNU rsync on this machine");
+        assert!(is_gnu(&path));
     }
 
     #[test]
