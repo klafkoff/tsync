@@ -19,6 +19,8 @@ tsync-doctor = { path = "../doctor" }
 tsync-plan = { path = "../plan" }
 tsync-rewrite = { path = "../rewrite" }
 tsync-transfer = { path = "../transfer" }
+tsync-qbt = { path = "../qbt" }
+tsync-import = { path = "../import" }
 
 [lints]
 workspace = true

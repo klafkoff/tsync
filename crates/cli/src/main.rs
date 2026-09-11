@@ -90,6 +90,36 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Add staged torrents to a destination client, paused, then recheck.
+    Import {
+        /// Destination `WebUI` base URL, e.g. `<http://127.0.0.1:8080>`
+        #[arg(long)]
+        url: String,
+        /// Staging directory from `tsync rewrite`.
+        #[arg(long)]
+        staging: PathBuf,
+        /// Destination `WebUI` username.
+        #[arg(long)]
+        username: String,
+        /// Env var that holds the destination password. Never pass the password here.
+        #[arg(long, default_value = "QBT_PASSWORD")]
+        password_env: String,
+        /// Source `WebUI`, for the dual-seed guard.
+        #[arg(long)]
+        source_url: Option<String>,
+        /// Source username. Defaults to `--username`.
+        #[arg(long)]
+        source_username: Option<String>,
+        /// Env var for the source password. Defaults to `--password-env`.
+        #[arg(long)]
+        source_password_env: Option<String>,
+        /// Skip the dual-seed check. Dual-announce on a private tracker is on you.
+        #[arg(long)]
+        allow_unverified_source: bool,
+        /// Select and refuse, but do not add.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -129,6 +159,31 @@ fn main() -> ExitCode {
             budget_gib,
             max_mib,
             max_torrents,
+            dry_run,
+        ),
+        Commands::Import {
+            url,
+            staging,
+            username,
+            password_env,
+            source_url,
+            source_username,
+            source_password_env,
+            allow_unverified_source,
+            dry_run,
+        } => import(
+            WebLogin {
+                url: &url,
+                username: &username,
+                password_env: &password_env,
+            },
+            &staging,
+            source_url.as_deref().map(|source_url| WebLogin {
+                url: source_url,
+                username: source_username.as_deref().unwrap_or(&username),
+                password_env: source_password_env.as_deref().unwrap_or(&password_env),
+            }),
+            allow_unverified_source,
             dry_run,
         ),
     }
@@ -282,6 +337,79 @@ fn transfer(
         }
         Err(error) => {
             eprintln!("transfer: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct WebLogin<'a> {
+    url: &'a str,
+    username: &'a str,
+    password_env: &'a str,
+}
+
+fn password_from_env(name: &str) -> Result<String, ExitCode> {
+    match std::env::var(name) {
+        Ok(value) if !value.is_empty() => Ok(value),
+        _ => {
+            eprintln!("import: set {name} to the WebUI password");
+            Err(ExitCode::FAILURE)
+        }
+    }
+}
+
+fn session(label: &str, login: WebLogin<'_>) -> Result<tsync_qbt::Session, ExitCode> {
+    let password = password_from_env(login.password_env)?;
+    tsync_qbt::Session::login(login.url, login.username, &password).map_err(|error| {
+        if label.is_empty() {
+            eprintln!("import: {error}");
+        } else {
+            eprintln!("import: {label}: {error}");
+        }
+        ExitCode::FAILURE
+    })
+}
+
+fn import(
+    dest: WebLogin<'_>,
+    staging: &Path,
+    source: Option<WebLogin<'_>>,
+    allow_unverified_source: bool,
+    dry_run: bool,
+) -> ExitCode {
+    let dest = match session("", dest) {
+        Ok(session) => session,
+        Err(code) => return code,
+    };
+
+    let source = match source {
+        Some(login) => match session("source", login) {
+            Ok(session) => Some(session),
+            Err(code) => return code,
+        },
+        None => None,
+    };
+
+    match tsync_import::run(&tsync_import::Options {
+        staging: staging.to_path_buf(),
+        dest: &dest,
+        source: source
+            .as_ref()
+            .map(|session| session as &dyn tsync_qbt::Client),
+        allow_unverified_source,
+        dry_run,
+    }) {
+        Ok(report) => {
+            print!("{}", report.render());
+            if report.is_complete() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => {
+            eprintln!("import: {error}");
             ExitCode::FAILURE
         }
     }

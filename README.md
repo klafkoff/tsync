@@ -9,8 +9,8 @@ downloading 60 GB you are holding in your hand.
 
 `tsync` does that, and refuses to do anything unsafe along the way.
 
-> **Status: in development.** `tsync doctor`, `audit`, `plan`, `rewrite`, and
-> `transfer` run. Import and later steps are not available yet.
+> **Status: in development.** `tsync doctor`, `audit`, `plan`, `rewrite`,
+> `transfer`, and `import` run. Verify and later steps are not available yet.
 
 To build from source and confirm the local environment, copy the blocks in
 [docs/setup.md](docs/setup.md).
@@ -76,6 +76,21 @@ Run `tsync doctor` before anything else. It probes for capabilities rather than
 parsing version strings, and every failure it reports comes with the exact
 command that fixes it. Copy-paste setup, including the PATH trap on macOS, is
 in [docs/setup.md](docs/setup.md).
+
+`tsync import` talks to a destination qBittorrent WebUI. It adds each staged
+`.torrent` paused, with a stop-after-check condition, then force-rechecks. A
+1 byte/s download limit is applied for the duration and restored afterwards.
+The password is read from `QBT_PASSWORD` — never from the command line.
+
+```bash
+export QBT_PASSWORD
+tsync import --url http://127.0.0.1:8080 --staging /tmp/tsync-staging \
+  --username admin --source-url http://127.0.0.1:8080
+```
+
+`--source-url` is the dual-seed guard. If the source is still seeding those
+hashes, import refuses. Do not point `--url` at a client that is still seeding
+the same torrents.
 
 ---
 
