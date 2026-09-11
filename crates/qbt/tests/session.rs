@@ -233,6 +233,7 @@ fn login_lists_and_adds_paused() {
     let log = state.lock().expect("log").requests.join("\n");
     assert!(log.contains("POST /api/v2/torrents/add"));
     assert!(log.contains("name=\"paused\""));
+    assert!(log.contains("name=\"stopped\""));
     assert!(log.contains("FilesChecked"));
     assert!(log.contains("POST /api/v2/torrents/stop"));
     assert!(log.contains("POST /api/v2/torrents/start"));

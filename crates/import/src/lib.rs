@@ -221,6 +221,9 @@ fn import_one(dest: &dyn Client, item: &StagedItem) -> Result<(), String> {
 fn finish_import(dest: &dyn Client, hash: &str) -> Result<(), String> {
     dest.stop(hash).map_err(|error| error.to_string())?;
     dest.recheck(hash).map_err(|error| error.to_string())?;
+    // Recheck is async. 5.x may start the torrent when the hash pass
+    // finishes if add only saw the old `paused` field. Stop again.
+    dest.stop(hash).map_err(|error| error.to_string())?;
     Ok(())
 }
 

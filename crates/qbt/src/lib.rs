@@ -402,7 +402,9 @@ fn multipart_add(torrent: &[u8], filename: &str, save_path: &str) -> (String, Ve
     let mut body = Vec::new();
     for (name, value) in [
         ("savepath", save_path),
+        // 4.x reads `paused`. 5.x renamed it to `stopped` and ignores `paused`.
         ("paused", "true"),
+        ("stopped", "true"),
         ("autoTMM", "false"),
         ("skip_checking", "false"),
         ("stopCondition", "FilesChecked"),

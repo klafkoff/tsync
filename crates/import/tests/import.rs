@@ -73,7 +73,7 @@ impl Client for Fake {
     }
 
     fn start(&self, _hash: &str) -> Result<(), QbtError> {
-        Ok(())
+        panic!("import must never start dest");
     }
 
     fn recheck(&self, hash: &str) -> Result<(), QbtError> {
@@ -199,8 +199,10 @@ fn adds_paused_rechecks_and_restores_the_download_limit() {
     assert_eq!(added.len(), 2);
     assert!(added.iter().all(|(_, path)| path == "/data"));
 
-    assert_eq!(dest.stopped.lock().expect("stopped").len(), 2);
+    let stopped = dest.stopped.lock().expect("stopped");
+    assert_eq!(stopped.len(), 4, "stop before and after recheck");
     assert_eq!(dest.rechecked.lock().expect("rechecked").len(), 2);
+    assert_eq!(&stopped[0], &stopped[1]);
 
     let limits = dest.limits.lock().expect("limits");
     assert_eq!(limits[0], 1, "circuit breaker first");
