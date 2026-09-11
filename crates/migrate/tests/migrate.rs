@@ -52,6 +52,8 @@ impl Client for Fake {
             progress: 1.0,
             amount_left: 0,
             save_path: save_path.to_owned(),
+            size: 0,
+            completed: 0,
         });
         Ok(())
     }
@@ -99,6 +101,8 @@ fn torrent(hash: &str, state: &str, progress: f64, amount_left: u64) -> Torrent 
         progress,
         amount_left,
         save_path: "/data".into(),
+        size: 0,
+        completed: 0,
     }
 }
 

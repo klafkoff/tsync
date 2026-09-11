@@ -58,6 +58,8 @@ tsync rewrite --to /data --staging /tmp/tsync-staging
 tsync transfer --to /data --rsync-to seedbox:/opt/seedbox/data
 
 # Leave dest paused. Re-run transfer if it stops; rsync resumes.
+# transfer prints GNU rsync progress2 as it copies.
+# import and handoff print a live N/total line while they talk to the WebAPI.
 tsync import --url http://127.0.0.1:8080 --username admin \
   --staging /tmp/tsync-staging --source-url http://127.0.0.1:8081 \
   --source-password-env QBT_SOURCE_PASSWORD
@@ -65,7 +67,10 @@ tsync import --url http://127.0.0.1:8080 --username admin \
 tsync verify --url http://127.0.0.1:8080 --username admin \
   --staging /tmp/tsync-staging
 # expect: ready = every torrent, checking = 0, failed = 0
-# if checking > 0, wait and run verify again
+# if dest is still hashing:  tsync verify … --wait
+#   (--wait redraws torrent/byte bars until checking is 0)
+# if dest is stopped at 0% after import:  tsync verify … --recheck --wait
+# do not re-run import to recheck — its trailing stop cancels the hash on 5.x
 
 tsync handoff --url http://127.0.0.1:8080 --source-url http://127.0.0.1:8081 \
   --staging /tmp/tsync-staging --username admin \
@@ -101,7 +106,9 @@ pilot. Drop it for the full library.
 
 `handoff` is the only tsync command that starts dest. It does **not** look at
 an rsync progress bar. It asks the dest client: is this hash piece-complete
-and stopped? A half-finished `transfer` fails that check.
+and stopped? A half-finished `transfer` fails that check. It only stops
+source hashes that are in staging. Torrents `plan` skipped stay on the
+source until you stop them yourself.
 
 **tsync cannot stop a Start click in the dest WebUI.** If you press Start
 there during a copy, dest can announce while the laptop still seeds. Do not

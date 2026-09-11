@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use tsync_fixtures::Builder;
-use tsync_handoff::{Options, run};
+use tsync_handoff::{Options, run, run_with_progress};
 use tsync_plan::DEFAULT_BUDGET;
 use tsync_qbt::{Client, Error as QbtError, Torrent};
 use tsync_rewrite::{Options as RewriteOptions, run as rewrite};
@@ -108,6 +108,8 @@ fn torrent(hash: &str, state: &str) -> Torrent {
         progress: 1.0,
         amount_left: 0,
         save_path: "/data".into(),
+        size: 0,
+        completed: 0,
     }
 }
 
@@ -119,6 +121,8 @@ fn incomplete(hash: &str) -> Torrent {
         progress: 0.5,
         amount_left: 512,
         save_path: "/data".into(),
+        size: 0,
+        completed: 0,
     }
 }
 
@@ -462,4 +466,30 @@ fn max_torrents_hands_off_only_the_smallest() {
     assert_eq!(source.log(), vec![format!("stop:{red}")]);
     assert_eq!(dest.log(), vec![format!("start:{red}")]);
     assert!(!source.log().iter().any(|line| line.contains(&blue)));
+}
+
+#[test]
+fn progress_ticks_once_per_candidate() {
+    let (_root, library, staging) = staged();
+    let dest = dest_ready(&library);
+    let source = source_seeding(&library);
+    let ticks = Mutex::new(Vec::new());
+
+    run_with_progress(
+        &Options {
+            staging: staging.path().to_path_buf(),
+            dest: &dest,
+            source: Some(&source),
+            confirm: false,
+            dry_run: false,
+            max_torrents: None,
+        },
+        |tick| ticks.lock().expect("ticks").push((tick.done, tick.total, tick.started)),
+    )
+    .expect("handoff");
+
+    assert_eq!(
+        ticks.lock().expect("ticks").clone(),
+        vec![(1, 2, true), (2, 2, true)]
+    );
 }

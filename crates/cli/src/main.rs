@@ -1,7 +1,9 @@
 //! Move a torrent library between machines without re-downloading it.
 
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 use tsync_audit::Options;
@@ -149,6 +151,14 @@ enum Commands {
         /// Verify only the smallest N staged torrents.
         #[arg(long)]
         max_torrents: Option<usize>,
+        /// Force-recheck incomplete stopped torrents. Does not stop afterwards
+        /// (a stop cancels the hash on qBittorrent 5.x). Skip if dest is
+        /// already hashing.
+        #[arg(long)]
+        recheck: bool,
+        /// Poll dest and redraw a progress bar until hashing finishes.
+        #[arg(long)]
+        wait: bool,
     },
     /// Stop the source, then start the destination. Never the reverse.
     Handoff {
@@ -354,6 +364,8 @@ fn dispatch(cli: Cli) -> ExitCode {
             password_env,
             allow_seeding,
             max_torrents,
+            recheck,
+            wait,
         } => verify(
             WebLogin {
                 url: &url,
@@ -363,6 +375,8 @@ fn dispatch(cli: Cli) -> ExitCode {
             &staging,
             allow_seeding,
             max_torrents,
+            recheck,
+            wait,
         ),
         Commands::Handoff {
             url,
@@ -652,31 +666,103 @@ fn verify(
     staging: &Path,
     allow_seeding: bool,
     max_torrents: Option<usize>,
+    recheck: bool,
+    wait: bool,
 ) -> ExitCode {
     let dest = match session("", dest) {
         Ok(session) => session,
         Err(code) => return code,
     };
 
-    match tsync_verify::run(&tsync_verify::Options {
-        staging: staging.to_path_buf(),
-        dest: &dest,
-        allow_seeding,
-        max_torrents,
-    }) {
-        Ok(report) => {
-            print!("{}", report.render());
-            if report.is_complete() {
-                ExitCode::SUCCESS
-            } else {
+    if !wait {
+        return match tsync_verify::run(&tsync_verify::Options {
+            staging: staging.to_path_buf(),
+            dest: &dest,
+            allow_seeding,
+            max_torrents,
+            recheck,
+        }) {
+            Ok(report) => finish_verify(&report),
+            Err(error) => {
+                eprintln!("verify: {error}");
                 ExitCode::FAILURE
             }
-        }
-        Err(error) => {
-            eprintln!("verify: {error}");
-            ExitCode::FAILURE
+        };
+    }
+
+    let tty = io::stdout().is_terminal();
+    let mut kick = recheck;
+    let mut prev_lines = 0;
+    let mut prev_hashed = 0;
+    let mut prev_at = Instant::now();
+    let mut seen = false;
+    let mut rate = None;
+    loop {
+        match tsync_verify::watch(&tsync_verify::Options {
+            staging: staging.to_path_buf(),
+            dest: &dest,
+            allow_seeding,
+            max_torrents,
+            recheck: kick,
+        }) {
+            Ok(snap) => {
+                if seen {
+                    let dt = prev_at.elapsed().as_secs_f64().max(0.001);
+                    rate = Some(snap.hashed_bytes.saturating_sub(prev_hashed) as f64 / dt);
+                }
+                seen = true;
+                prev_hashed = snap.hashed_bytes;
+                prev_at = Instant::now();
+                kick = false;
+
+                let hashing = snap.report.checking > 0 && !snap.report.is_complete();
+                if hashing {
+                    let frame = snap.render_rate(rate);
+                    if tty {
+                        reprint_frame(prev_lines, &frame);
+                        prev_lines = frame.lines().count();
+                    } else {
+                        eprintln!(
+                            "verify: ready {} checking {} hashed {} / {}",
+                            snap.report.ready,
+                            snap.report.checking,
+                            snap.hashed_bytes,
+                            snap.total_bytes
+                        );
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    continue;
+                }
+
+                if tty && prev_lines > 0 {
+                    reprint_frame(prev_lines, &snap.render_rate(rate));
+                    println!();
+                }
+                return finish_verify(&snap.report);
+            }
+            Err(error) => {
+                eprintln!("verify: {error}");
+                return ExitCode::FAILURE;
+            }
         }
     }
+}
+
+fn finish_verify(report: &tsync_verify::Report) -> ExitCode {
+    print!("{}", report.render());
+    if report.is_complete() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn reprint_frame(prev_lines: usize, frame: &str) {
+    if prev_lines > 0 {
+        print!("\x1b[{prev_lines}A\x1b[J");
+    }
+    print!("{frame}");
+    let _ = io::stdout().flush();
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -834,17 +920,24 @@ fn handoff(
         None => None,
     };
 
-    match tsync_handoff::run(&tsync_handoff::Options {
-        staging: staging.to_path_buf(),
-        dest: &dest,
-        source: source
-            .as_ref()
-            .map(|session| session as &dyn tsync_qbt::Client),
-        confirm,
-        dry_run,
-        max_torrents,
-    }) {
+    match tsync_handoff::run_with_progress(
+        &tsync_handoff::Options {
+            staging: staging.to_path_buf(),
+            dest: &dest,
+            source: source
+                .as_ref()
+                .map(|session| session as &dyn tsync_qbt::Client),
+            confirm,
+            dry_run,
+            max_torrents,
+        },
+        |tick| {
+            let verb = if tick.started { "started" } else { "skip" };
+            live_line("handoff", tick.done, tick.total, &tick.id, verb);
+        },
+    ) {
         Ok(report) => {
+            finish_live_line();
             print!("{}", report.render());
             if report.is_complete() {
                 ExitCode::SUCCESS
@@ -853,6 +946,7 @@ fn handoff(
             }
         }
         Err(error) => {
+            finish_live_line();
             eprintln!("handoff: {error}");
             ExitCode::FAILURE
         }
@@ -880,17 +974,21 @@ fn import(
         None => None,
     };
 
-    match tsync_import::run(&tsync_import::Options {
-        staging: staging.to_path_buf(),
-        dest: &dest,
-        source: source
-            .as_ref()
-            .map(|session| session as &dyn tsync_qbt::Client),
-        allow_unverified_source,
-        dry_run,
-        max_torrents,
-    }) {
+    match tsync_import::run_with_progress(
+        &tsync_import::Options {
+            staging: staging.to_path_buf(),
+            dest: &dest,
+            source: source
+                .as_ref()
+                .map(|session| session as &dyn tsync_qbt::Client),
+            allow_unverified_source,
+            dry_run,
+            max_torrents,
+        },
+        |tick| live_line("import", tick.done, tick.total, &tick.id, "dest"),
+    ) {
         Ok(report) => {
+            finish_live_line();
             print!("{}", report.render());
             if report.is_complete() {
                 ExitCode::SUCCESS
@@ -899,9 +997,30 @@ fn import(
             }
         }
         Err(error) => {
+            finish_live_line();
             eprintln!("import: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn live_line(command: &str, done: usize, total: usize, id: &str, verb: &str) {
+    let short = if id.len() > 12 {
+        format!("{}…", &id[..12])
+    } else {
+        id.to_owned()
+    };
+    if io::stderr().is_terminal() {
+        eprint!("\r{command}: {done:>3}/{total}  {verb}  {short}    ");
+        let _ = io::stderr().flush();
+    } else if done == 1 || done == total || done % 10 == 0 {
+        eprintln!("{command}: {done}/{total}  {verb}  {short}");
+    }
+}
+
+fn finish_live_line() {
+    if io::stderr().is_terminal() {
+        eprintln!();
     }
 }
 

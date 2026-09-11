@@ -3,7 +3,7 @@
 use std::sync::Mutex;
 
 use tsync_fixtures::Builder;
-use tsync_import::{Options, run};
+use tsync_import::{Options, run, run_with_progress};
 use tsync_plan::DEFAULT_BUDGET;
 use tsync_qbt::{Client, Error as QbtError, Torrent};
 use tsync_rewrite::{Options as RewriteOptions, run as rewrite};
@@ -40,6 +40,8 @@ impl Fake {
                 progress: 1.0,
                 amount_left: 0,
                 save_path: "/srv/music".into(),
+                size: 0,
+                completed: 0,
             }],
             added: Mutex::new(Vec::new()),
             stopped: Mutex::new(Vec::new()),
@@ -296,4 +298,30 @@ fn max_torrents_imports_only_the_smallest() {
 
     assert_eq!(report.imported, 1);
     assert_eq!(dest.added.lock().expect("added").len(), 1);
+}
+
+#[test]
+fn progress_ticks_once_per_staged_item() {
+    let (_root, _library, staging) = staged();
+    let dest = Fake::empty();
+    let source = Fake::empty();
+    let ticks = Mutex::new(Vec::new());
+
+    run_with_progress(
+        &Options {
+            staging: staging.path().to_path_buf(),
+            dest: &dest,
+            source: Some(&source),
+            allow_unverified_source: false,
+            dry_run: false,
+            max_torrents: None,
+        },
+        |tick| ticks.lock().expect("ticks").push((tick.done, tick.total)),
+    )
+    .expect("import");
+
+    assert_eq!(
+        ticks.lock().expect("ticks").clone(),
+        vec![(1, 2), (2, 2)]
+    );
 }

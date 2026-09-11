@@ -59,6 +59,12 @@ pub struct Torrent {
     /// Save path, if present.
     #[serde(default)]
     pub save_path: String,
+    /// Declared size in bytes, if the client reports it.
+    #[serde(default)]
+    pub size: u64,
+    /// Bytes the client has hashed or downloaded, if reported.
+    #[serde(default)]
+    pub completed: u64,
 }
 
 /// One content file as `torrents/files` reports it.
@@ -492,6 +498,8 @@ mod cookie_tests {
             progress: 1.0,
             amount_left: 0,
             save_path: "/data".into(),
+            size: 1024,
+            completed: 1024,
         };
         let incomplete = Torrent {
             amount_left: 512,

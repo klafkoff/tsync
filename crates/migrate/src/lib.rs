@@ -207,6 +207,7 @@ pub fn run(opts: &Options<'_>) -> Result<Report, Error> {
             dest: opts.dest_client,
             allow_seeding: false,
             max_torrents: opts.max_torrents,
+            recheck: false,
         })?;
         report.ready = verify.ready;
         report.stopped_at = "verify";

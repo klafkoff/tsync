@@ -7,6 +7,8 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::PathBuf;
+use std::thread;
+use std::time::Duration;
 
 use tsync_qbt::{
     CIRCUIT_BREAKER_BPS, Client, Torrent, is_checking, is_downloading, is_piece_complete,
@@ -29,6 +31,19 @@ pub struct Options<'a> {
     pub dry_run: bool,
     /// Handoff only the smallest N staged torrents.
     pub max_torrents: Option<usize>,
+}
+
+/// One candidate after it is stopped/started (or fails).
+#[derive(Clone, Debug)]
+pub struct Tick {
+    /// 1-based count of candidates processed so far.
+    pub done: usize,
+    /// Candidates this run will start (or try to).
+    pub total: usize,
+    /// Infohash just processed.
+    pub id: String,
+    /// True when dest `start` was called for this hash.
+    pub started: bool,
 }
 
 /// Why handoff could not start.
@@ -127,6 +142,19 @@ enum Class {
 /// Returns [`Error`] when staging cannot be read or a client cannot be listed
 /// before any stop/start.
 pub fn run(opts: &Options<'_>) -> Result<Report, Error> {
+    run_with_progress(opts, |_| {})
+}
+
+/// Same as [`run`], calling `progress` after each candidate so a CLI can
+/// show that the command is still working.
+///
+/// # Errors
+///
+/// Same as [`run`].
+pub fn run_with_progress(
+    opts: &Options<'_>,
+    mut progress: impl FnMut(Tick),
+) -> Result<Report, Error> {
     let expected = expected_hashes(&opts.staging, opts.max_torrents)?;
     let dest_map = index(&opts.dest.list()?);
     let source_map = match opts.source {
@@ -196,10 +224,14 @@ pub fn run(opts: &Options<'_>) -> Result<Report, Error> {
 
     let mut started = 0;
     let mut source_stopped = 0;
-    for hash in &candidates {
-        match handoff_one(opts.source, opts.dest, hash) {
+    let total = candidates.len();
+    for (index, hash) in candidates.iter().enumerate() {
+        let prior = source_map.as_ref().and_then(|map| map.get(hash));
+        let mut did_start = false;
+        match handoff_one(opts.source, opts.dest, hash, prior) {
             Ok(did_stop) => {
                 started += 1;
+                did_start = true;
                 if did_stop {
                     source_stopped += 1;
                 }
@@ -209,6 +241,12 @@ pub fn run(opts: &Options<'_>) -> Result<Report, Error> {
                 reason,
             }),
         }
+        progress(Tick {
+            done: index + 1,
+            total,
+            id: hash.clone(),
+            started: did_start,
+        });
     }
 
     Ok(Report {
@@ -258,35 +296,36 @@ fn classify(dest: Option<&Torrent>, source: Option<&Torrent>, opts: &Options<'_>
     Class::Candidate
 }
 
-fn handoff_one(source: Option<&dyn Client>, dest: &dyn Client, hash: &str) -> Result<bool, String> {
+fn handoff_one(
+    source: Option<&dyn Client>,
+    dest: &dyn Client,
+    hash: &str,
+    prior: Option<&Torrent>,
+) -> Result<bool, String> {
     let mut did_stop = false;
     if let Some(source) = source {
-        if source_needs_stop(source, hash)? {
+        let mut state = prior.map(|torrent| torrent.state.clone());
+        if state.as_deref().is_some_and(|s| !is_stopped(s)) {
             source.stop(hash).map_err(|error| error.to_string())?;
             did_stop = true;
+            // 5.x can still report stalledUP for a beat after torrents/stop.
+            thread::sleep(Duration::from_millis(250));
+            state = source_state(source, hash)?;
         }
-        if source_still_seeding(source, hash)? {
-            return Err("source still seeding after stop; dest was not started".into());
+        if state.as_deref().is_some_and(is_seeding) {
+            return Err(format!(
+                "source still seeding after stop ({}); dest was not started",
+                state.unwrap_or_default()
+            ));
         }
     }
     dest.start(hash).map_err(|error| error.to_string())?;
     Ok(did_stop)
 }
 
-fn source_needs_stop(source: &dyn Client, hash: &str) -> Result<bool, String> {
+fn source_state(source: &dyn Client, hash: &str) -> Result<Option<String>, String> {
     let listed = source.list().map_err(|error| error.to_string())?;
-    let Some(torrent) = find_hash(&listed, hash) else {
-        return Ok(false);
-    };
-    Ok(!is_stopped(&torrent.state))
-}
-
-fn source_still_seeding(source: &dyn Client, hash: &str) -> Result<bool, String> {
-    let listed = source.list().map_err(|error| error.to_string())?;
-    let Some(torrent) = find_hash(&listed, hash) else {
-        return Ok(false);
-    };
-    Ok(is_seeding(&torrent.state))
+    Ok(find_hash(&listed, hash).map(|torrent| torrent.state.clone()))
 }
 
 fn find_hash<'a>(torrents: &'a [Torrent], hash: &str) -> Option<&'a Torrent> {

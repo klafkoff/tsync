@@ -249,19 +249,18 @@ pub(crate) fn copy_relatives(
     cmd.arg("--")
         .arg(slash_dir_str(&from.rsync_url()))
         .arg(slash_dir_str(&to.rsync_url()));
-    let output = cmd.output();
+    // Inherit stdio so `--info=progress2` prints while the copy runs.
+    // `Command::output()` pipes both streams and hides them until exit.
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    let status = cmd.status();
     let _ = fs::remove_file(&list);
-    let output = output.map_err(|error| format!("rsync: {error}"))?;
-    if output.status.success() {
+    let status = status.map_err(|error| format!("rsync: {error}"))?;
+    if status.success() {
         Ok(())
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stderr = stderr.trim();
-        if stderr.is_empty() {
-            Err(format!("rsync exited {}", output.status))
-        } else {
-            Err(format!("rsync exited {}: {stderr}", output.status))
-        }
+        Err(format!("rsync exited {status}"))
     }
 }
 

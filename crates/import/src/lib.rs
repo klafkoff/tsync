@@ -31,6 +31,17 @@ pub struct Options<'a> {
     pub max_torrents: Option<usize>,
 }
 
+/// One staged torrent after add/recheck (or skip).
+#[derive(Clone, Debug)]
+pub struct Tick {
+    /// 1-based count of staged items processed so far.
+    pub done: usize,
+    /// Staged items this run will touch.
+    pub total: usize,
+    /// Infohash just processed.
+    pub id: String,
+}
+
 /// Why import could not start.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -124,6 +135,18 @@ impl Report {
 /// Returns [`Error`] when staging cannot be read, the dual-seed guard fires,
 /// the source is missing, or the destination API fails before any add.
 pub fn run(opts: &Options<'_>) -> Result<Report, Error> {
+    run_with_progress(opts, |_| {})
+}
+
+/// Same as [`run`], calling `progress` after each staged item.
+///
+/// # Errors
+///
+/// Same as [`run`].
+pub fn run_with_progress(
+    opts: &Options<'_>,
+    mut progress: impl FnMut(Tick),
+) -> Result<Report, Error> {
     let mut staged = read_staging(&opts.staging)?;
     take_smallest(&mut staged.items, opts.max_torrents);
     let unpaired = staged.unpaired;
@@ -178,8 +201,9 @@ pub fn run(opts: &Options<'_>) -> Result<Report, Error> {
     let mut imported = 0;
     let mut already_present = 0;
     let mut failed = Vec::new();
+    let total = staged.items.len();
 
-    for item in &staged.items {
+    for (index, item) in staged.items.iter().enumerate() {
         if dest_hashes.contains(&item.hash) {
             already_present += 1;
             if let Err(reason) = finish_import(opts.dest, &item.hash) {
@@ -188,15 +212,20 @@ pub fn run(opts: &Options<'_>) -> Result<Report, Error> {
                     reason,
                 });
             }
-            continue;
+        } else {
+            match import_one(opts.dest, item) {
+                Ok(()) => imported += 1,
+                Err(reason) => failed.push(Failure {
+                    id: item.hash.clone(),
+                    reason,
+                }),
+            }
         }
-        match import_one(opts.dest, item) {
-            Ok(()) => imported += 1,
-            Err(reason) => failed.push(Failure {
-                id: item.hash.clone(),
-                reason,
-            }),
-        }
+        progress(Tick {
+            done: index + 1,
+            total,
+            id: item.hash.clone(),
+        });
     }
 
     Ok(Report {

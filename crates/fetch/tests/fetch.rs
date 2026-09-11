@@ -80,6 +80,8 @@ fn torrent(hash: &str, progress: f64, amount_left: u64) -> Torrent {
         progress,
         amount_left,
         save_path: "/data".into(),
+        size: 0,
+        completed: 0,
     }
 }
 

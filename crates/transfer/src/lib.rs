@@ -6,7 +6,8 @@
 //! when macOS TCC refuses `opendir` on the parent.
 //!
 //! The transport is GNU rsync: local, or `host:/path` over SSH. Re-running
-//! is safe; `--partial` resumes an interrupted copy.
+//! is safe; `--partial` resumes an interrupted copy. Progress2 is written
+//! to the terminal while rsync runs.
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
