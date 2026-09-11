@@ -125,6 +125,7 @@ fn refuses_without_a_source_unless_explicitly_allowed() {
         source: None,
         allow_unverified_source: false,
         dry_run: false,
+        max_torrents: None,
     })
     .expect_err("source required");
     assert!(error.to_string().contains("source-url"));
@@ -143,6 +144,7 @@ fn refuses_when_the_source_still_seeds() {
         source: Some(&source),
         allow_unverified_source: false,
         dry_run: false,
+        max_torrents: None,
     })
     .expect_err("dual seed");
     assert!(error.to_string().contains("still seeding"));
@@ -161,6 +163,7 @@ fn adds_paused_rechecks_and_restores_the_download_limit() {
         source: Some(&source),
         allow_unverified_source: false,
         dry_run: false,
+        max_torrents: None,
     })
     .expect("import");
 
@@ -193,6 +196,7 @@ fn skips_hashes_already_on_the_destination() {
         source: Some(&source),
         allow_unverified_source: false,
         dry_run: false,
+        max_torrents: None,
     })
     .expect("import");
 
@@ -213,6 +217,7 @@ fn dry_run_does_not_add_or_change_limits() {
         source: Some(&source),
         allow_unverified_source: false,
         dry_run: true,
+        max_torrents: None,
     })
     .expect("dry run");
 
@@ -237,10 +242,31 @@ fn restores_the_limit_when_an_add_fails() {
         source: Some(&source),
         allow_unverified_source: false,
         dry_run: false,
+        max_torrents: None,
     })
     .expect("report");
 
     assert_eq!(report.failed.len(), 2);
     let limits = dest.limits.lock().expect("limits");
     assert_eq!(*limits.last().expect("restored"), 0);
+}
+
+#[test]
+fn max_torrents_imports_only_the_smallest() {
+    let (_root, _library, staging) = staged();
+    let dest = Fake::empty();
+    let source = Fake::empty();
+
+    let report = run(&Options {
+        staging: staging.path().to_path_buf(),
+        dest: &dest,
+        source: Some(&source),
+        allow_unverified_source: false,
+        dry_run: false,
+        max_torrents: Some(1),
+    })
+    .expect("import");
+
+    assert_eq!(report.imported, 1);
+    assert_eq!(dest.added.lock().expect("added").len(), 1);
 }

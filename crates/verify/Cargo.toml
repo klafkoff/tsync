@@ -1,0 +1,22 @@
+[package]
+name = "tsync-verify"
+description = "Prove destination torrents are complete and still paused."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tsync-core = { path = "../core" }
+tsync-qbt = { path = "../qbt" }
+
+[dev-dependencies]
+tempfile.workspace = true
+tsync-fixtures = { path = "../fixtures" }
+tsync-plan = { path = "../plan" }
+tsync-rewrite = { path = "../rewrite" }
+
+[lints]
+workspace = true

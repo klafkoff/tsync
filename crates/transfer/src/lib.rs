@@ -4,24 +4,27 @@
 //! paths. Files are copied by the paths in the torrent, not by walking the
 //! source directory — so a process that can `stat` a file can copy it, even
 //! when macOS TCC refuses `opendir` on the parent.
+//!
+//! The transport is GNU rsync: local, or `host:/path` over SSH. Re-running
+//! is safe; `--partial` resumes an interrupted copy.
 
 use std::fmt::Write as _;
-use std::fs;
-use std::io;
 use std::path::PathBuf;
 
 use tsync_audit::Options as AuditOptions;
-use tsync_audit::paths::content_path;
-use tsync_core::metainfo;
-use tsync_plan::{Plan, Planned};
+use tsync_plan::Plan;
+
+mod rsync;
 
 /// How to run a transfer.
 #[derive(Clone, Debug)]
 pub struct Options {
     /// Source `BT_backup`. Read-only.
     pub bt_backup: PathBuf,
-    /// Destination data root — mapping target and local copy destination.
+    /// Destination save-path root — the mapping target (`plan` / `rewrite`).
     pub dest: String,
+    /// Where bytes are written. Local path or `host:/path`. Defaults to [`Self::dest`].
+    pub rsync_to: Option<String>,
     /// Batch budget forwarded to plan.
     pub budget: u64,
     /// Relocate fixture save paths, same as audit.
@@ -47,6 +50,9 @@ pub enum Error {
     /// Destination root is empty or `/`.
     #[error("destination root is empty or /")]
     BadDestination,
+    /// rsync is missing, rejected, or the copy could not start.
+    #[error("{0}")]
+    Rsync(String),
 }
 
 /// Outcome of one transfer pass.
@@ -64,7 +70,7 @@ pub struct Report {
     pub failed: Vec<Failure>,
     /// True when nothing was written.
     pub dry_run: bool,
-    /// Destination root.
+    /// Where bytes were sent (local path or `host:/path`).
     pub dest: String,
 }
 
@@ -131,13 +137,13 @@ impl Report {
     }
 }
 
-/// Copies planned torrents to `opts.dest`.
+/// Copies planned torrents with rsync.
 ///
 /// # Errors
 ///
-/// Returns [`Error`] when the source cannot be read or the destination is
-/// unusable. Per-torrent copy failures are recorded on the report instead of
-/// aborting the run.
+/// Returns [`Error`] when the source cannot be read, the destination is
+/// unusable, or rsync cannot start. Per-torrent copy failures are recorded
+/// on the report instead of aborting the run.
 pub fn run(opts: &Options) -> Result<Report, Error> {
     if opts.dest.is_empty() || opts.dest == "/" {
         return Err(Error::BadDestination);
@@ -153,6 +159,7 @@ pub fn run(opts: &Options) -> Result<Report, Error> {
     let plan = full.take_smallest(opts.max_bytes, opts.max_torrents);
     let deferred = all_count.saturating_sub(plan.eligible_count());
     let deferred_bytes = all_bytes.saturating_sub(plan.eligible_bytes());
+    let dest = opts.rsync_to.clone().unwrap_or_else(|| opts.dest.clone());
 
     if opts.dry_run {
         return Ok(Report {
@@ -162,70 +169,28 @@ pub fn run(opts: &Options) -> Result<Report, Error> {
             copied: 0,
             failed: Vec::new(),
             dry_run: true,
-            dest: opts.dest.clone(),
+            dest,
         });
     }
 
-    let mut copied = 0;
-    let mut failed = Vec::new();
+    let rsync = rsync::resolve_binary().map_err(Error::Rsync)?;
+    let target = rsync::Target::parse(&dest).map_err(Error::Rsync)?;
+    rsync::ensure_dest(&target).map_err(Error::Rsync)?;
 
-    for item in plan.batches.iter().flat_map(|batch| batch.torrents.iter()) {
-        match copy_one(opts, item) {
-            Ok(()) => copied += 1,
-            Err(reason) => failed.push(Failure {
-                id: item.entry.id.clone(),
-                reason,
-            }),
-        }
-    }
+    let (copied, failed) = rsync::copy_plan(opts, &plan, &target, &rsync);
 
     Ok(Report {
         plan,
         deferred,
         deferred_bytes,
         copied,
-        failed,
+        failed: failed
+            .into_iter()
+            .map(|(id, reason)| Failure { id, reason })
+            .collect(),
         dry_run: false,
-        dest: opts.dest.clone(),
+        dest,
     })
-}
-
-fn copy_one(opts: &Options, item: &Planned) -> Result<(), String> {
-    let torrent_path = opts.bt_backup.join(format!("{}.torrent", item.entry.id));
-    let bytes = fs::read(&torrent_path).map_err(|error| format!("read torrent: {error}"))?;
-    let meta = metainfo::parse(&bytes).map_err(|error| error.to_string())?;
-
-    let mut copied_files = 0;
-    for file in &meta.files {
-        let source = content_path(
-            item.entry.save_path.as_bytes(),
-            &meta,
-            file,
-            opts.data_root.as_deref(),
-        );
-        if !source.exists() {
-            continue;
-        }
-        let dest = content_path(item.dest_path.as_bytes(), &meta, file, None);
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).map_err(|error| copy_error(&error))?;
-        }
-        fs::copy(&source, &dest).map_err(|error| copy_error(&error))?;
-        copied_files += 1;
-    }
-
-    if copied_files == 0 {
-        return Err("no source files could be copied".to_owned());
-    }
-    Ok(())
-}
-
-fn copy_error(error: &io::Error) -> String {
-    if error.kind() == io::ErrorKind::PermissionDenied {
-        "permission denied reading source (macOS Full Disk Access?)".to_owned()
-    } else {
-        format!("copy: {error}")
-    }
 }
 
 fn short_id(id: &str) -> String {

@@ -66,11 +66,16 @@ enum Commands {
         #[arg(long, default_value_t = 4)]
         budget_gib: u64,
     },
-    /// Copy torrent content by known paths. Source files are never modified.
+    /// Copy torrent content with rsync. Source files are never modified.
     Transfer {
-        /// Destination data root (local path). Also the mapping target.
+        /// Destination save-path root the client will use (same as `plan` / `rewrite`).
         #[arg(long)]
         to: PathBuf,
+        /// Where the bytes go. Local path, or `host:/abs/path` over SSH.
+        /// Defaults to `--to`. Use this when that path is not the host path
+        /// (Docker `/data` vs `/opt/seedbox/data`).
+        #[arg(long)]
+        rsync_to: Option<String>,
         /// qBittorrent `BT_backup` directory. Blank = per-OS default.
         #[arg(long)]
         bt_backup: Option<PathBuf>,
@@ -119,6 +124,31 @@ enum Commands {
         /// Select and refuse, but do not add.
         #[arg(long)]
         dry_run: bool,
+        /// Import only the smallest N staged torrents.
+        #[arg(long)]
+        max_torrents: Option<usize>,
+    },
+    /// Prove destination torrents are complete and still paused.
+    Verify {
+        /// Destination `WebUI` base URL, e.g. `<http://127.0.0.1:8080>`
+        #[arg(long)]
+        url: String,
+        /// Staging directory from `tsync rewrite`. Expected hashes come from here.
+        #[arg(long)]
+        staging: PathBuf,
+        /// Destination `WebUI` username.
+        #[arg(long)]
+        username: String,
+        /// Env var that holds the destination password. Never pass the password here.
+        #[arg(long, default_value = "QBT_PASSWORD")]
+        password_env: String,
+        /// Accept a complete torrent that is already seeding. Default is to
+        /// fail it — handoff is what starts the destination.
+        #[arg(long)]
+        allow_seeding: bool,
+        /// Verify only the smallest N staged torrents.
+        #[arg(long)]
+        max_torrents: Option<usize>,
     },
 }
 
@@ -146,6 +176,7 @@ fn main() -> ExitCode {
         } => rewrite(&to, &staging, bt_backup, data_root, budget_gib),
         Commands::Transfer {
             to,
+            rsync_to,
             bt_backup,
             data_root,
             budget_gib,
@@ -154,6 +185,7 @@ fn main() -> ExitCode {
             dry_run,
         } => transfer(
             &to,
+            rsync_to,
             bt_backup,
             data_root,
             budget_gib,
@@ -171,6 +203,7 @@ fn main() -> ExitCode {
             source_password_env,
             allow_unverified_source,
             dry_run,
+            max_torrents,
         } => import(
             WebLogin {
                 url: &url,
@@ -185,6 +218,24 @@ fn main() -> ExitCode {
             }),
             allow_unverified_source,
             dry_run,
+            max_torrents,
+        ),
+        Commands::Verify {
+            url,
+            staging,
+            username,
+            password_env,
+            allow_seeding,
+            max_torrents,
+        } => verify(
+            WebLogin {
+                url: &url,
+                username: &username,
+                password_env: &password_env,
+            },
+            &staging,
+            allow_seeding,
+            max_torrents,
         ),
     }
 }
@@ -293,8 +344,10 @@ fn rewrite(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn transfer(
     to: &Path,
+    rsync_to: Option<String>,
     bt_backup: Option<PathBuf>,
     data_root: Option<PathBuf>,
     budget_gib: u64,
@@ -321,6 +374,7 @@ fn transfer(
     match tsync_transfer::run(&tsync_transfer::Options {
         bt_backup,
         dest: dest.into_owned(),
+        rsync_to,
         budget,
         data_root,
         max_bytes,
@@ -371,12 +425,45 @@ fn session(label: &str, login: WebLogin<'_>) -> Result<tsync_qbt::Session, ExitC
     })
 }
 
+fn verify(
+    dest: WebLogin<'_>,
+    staging: &Path,
+    allow_seeding: bool,
+    max_torrents: Option<usize>,
+) -> ExitCode {
+    let dest = match session("", dest) {
+        Ok(session) => session,
+        Err(code) => return code,
+    };
+
+    match tsync_verify::run(&tsync_verify::Options {
+        staging: staging.to_path_buf(),
+        dest: &dest,
+        allow_seeding,
+        max_torrents,
+    }) {
+        Ok(report) => {
+            print!("{}", report.render());
+            if report.is_complete() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => {
+            eprintln!("verify: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn import(
     dest: WebLogin<'_>,
     staging: &Path,
     source: Option<WebLogin<'_>>,
     allow_unverified_source: bool,
     dry_run: bool,
+    max_torrents: Option<usize>,
 ) -> ExitCode {
     let dest = match session("", dest) {
         Ok(session) => session,
@@ -399,6 +486,7 @@ fn import(
             .map(|session| session as &dyn tsync_qbt::Client),
         allow_unverified_source,
         dry_run,
+        max_torrents,
     }) {
         Ok(report) => {
             print!("{}", report.render());

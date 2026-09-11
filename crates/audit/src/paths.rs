@@ -57,7 +57,9 @@ pub fn relative_name(meta: &Metainfo, file: &ContentFile) -> String {
     }
 }
 
-fn locate_save(save_path: &[u8], data_root: Option<&Path>) -> PathBuf {
+/// The on-disk directory for a resume `save_path`, honoring `data_root`.
+#[must_use]
+pub fn locate_save(save_path: &[u8], data_root: Option<&Path>) -> PathBuf {
     let save = os_from_bytes(save_path);
     match data_root {
         None => save,

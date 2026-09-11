@@ -1,0 +1,30 @@
+---
+description: Keep operator platform and test hosts out of this repository
+alwaysApply: true
+---
+
+# This repository is the product, not the operator's machines
+
+`tsync` is the public utility. Anything that identifies a real box, a real
+site, a real library, or another project the operator runs **does not go
+here**. That includes compose stacks, Caddy site files, SSH aliases, IPs,
+provider account notes, and sibling Docker networks.
+
+## Do
+
+- Use fictional examples: `seedbox`, `seedbox.example`, `203.0.113.10`.
+- Put a real host's bootstrap, secrets, and compose in the **private**
+  design repo, never in this tree.
+- Leave destination install instructions generic. The user brings their own
+  client.
+
+## Do not
+
+- Add a `deploy/` directory.
+- Commit `.env`, passkeys, or `.torrent` / resume files.
+- Name a live hostname, VPS provider account, or another repo's service
+  in docs, comments, tests, or CI.
+- "Just this once" a working stack from a real migration.
+
+If a change would only make sense on one person's machines, it is in the
+wrong repository. Stop and put it in the private repo instead.

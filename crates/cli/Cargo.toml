@@ -21,6 +21,7 @@ tsync-rewrite = { path = "../rewrite" }
 tsync-transfer = { path = "../transfer" }
 tsync-qbt = { path = "../qbt" }
 tsync-import = { path = "../import" }
+tsync-verify = { path = "../verify" }
 
 [lints]
 workspace = true

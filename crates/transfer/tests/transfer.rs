@@ -28,6 +28,7 @@ fn opts(
     Options {
         bt_backup: library.bt_backup.clone(),
         dest: dest.to_string_lossy().into_owned(),
+        rsync_to: None,
         budget: DEFAULT_BUDGET,
         data_root: Some(library.data_root.clone()),
         max_bytes,
@@ -93,6 +94,21 @@ fn max_bytes_stops_before_exceeding() {
     assert_eq!(report.plan.eligible_bytes(), 1024);
     assert!(dest.path().join("red").join("a.flac").exists());
     assert!(!dest.path().join("blue").exists());
+}
+
+#[test]
+fn rsync_to_can_differ_from_the_mapping_root() {
+    let (_root, library) = library();
+    let mapped = tempfile::tempdir().expect("mapped");
+    let bytes = tempfile::tempdir().expect("bytes");
+
+    let mut options = opts(&library, mapped.path(), None, None, false);
+    options.rsync_to = Some(bytes.path().to_string_lossy().into_owned());
+    let report = run(&options).expect("transfer");
+
+    assert_eq!(report.copied, 2);
+    assert!(bytes.path().join("red").join("a.flac").exists());
+    assert!(!mapped.path().join("red").exists());
 }
 
 #[test]

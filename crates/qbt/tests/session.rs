@@ -15,7 +15,21 @@ struct State {
     requests: Vec<String>,
 }
 
+#[derive(Clone, Copy)]
+enum Dialect {
+    Legacy,
+    V52,
+}
+
 fn spawn() -> (String, Arc<Mutex<State>>, thread::JoinHandle<()>) {
+    spawn_dialect(Dialect::Legacy)
+}
+
+fn spawn_v52() -> (String, Arc<Mutex<State>>, thread::JoinHandle<()>) {
+    spawn_dialect(Dialect::V52)
+}
+
+fn spawn_dialect(dialect: Dialect) -> (String, Arc<Mutex<State>>, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("addr");
     listener.set_nonblocking(true).expect("nonblocking");
@@ -25,7 +39,7 @@ fn spawn() -> (String, Arc<Mutex<State>>, thread::JoinHandle<()>) {
         let deadline = Instant::now() + Duration::from_secs(4);
         while Instant::now() < deadline {
             match listener.accept() {
-                Ok((stream, _)) => serve(stream, &shared),
+                Ok((stream, _)) => serve(stream, &shared, dialect),
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(5));
                 }
@@ -36,7 +50,7 @@ fn spawn() -> (String, Arc<Mutex<State>>, thread::JoinHandle<()>) {
     (format!("http://{addr}"), state, handle)
 }
 
-fn serve(mut stream: TcpStream, state: &Arc<Mutex<State>>) {
+fn serve(mut stream: TcpStream, state: &Arc<Mutex<State>>, dialect: Dialect) {
     stream
         .set_read_timeout(Some(Duration::from_millis(250)))
         .ok();
@@ -50,12 +64,22 @@ fn serve(mut stream: TcpStream, state: &Arc<Mutex<State>>) {
         .push(format!("{method} {path} {body}"));
 
     let (status, headers, reply) = match (method.as_str(), path.as_str()) {
-        ("POST", "/api/v2/auth/login") if body.contains("password=secret") => (
-            "200 OK",
-            "Set-Cookie: SID=test-sid; HttpOnly; Path=/\r\n",
-            b"Ok.".as_slice(),
-        ),
-        ("POST", "/api/v2/auth/login") => ("200 OK", "", b"Fails.".as_slice()),
+        ("POST", "/api/v2/auth/login") if body.contains("password=secret") => match dialect {
+            Dialect::Legacy => (
+                "200 OK",
+                "Set-Cookie: SID=test-sid; HttpOnly; Path=/\r\n",
+                b"Ok.".as_slice(),
+            ),
+            Dialect::V52 => (
+                "204 No Content",
+                "Set-Cookie: QBT_SID_8080=test-sid; HttpOnly; SameSite=Strict\r\n",
+                b"".as_slice(),
+            ),
+        },
+        ("POST", "/api/v2/auth/login") => match dialect {
+            Dialect::Legacy => ("200 OK", "", b"Fails.".as_slice()),
+            Dialect::V52 => ("401 Unauthorized", "", b"Unauthorized".as_slice()),
+        },
         ("GET", "/api/v2/app/webapiVersion") => ("200 OK", "", b"2.11.2".as_slice()),
         ("GET", "/api/v2/torrents/info") => (
             "200 OK",
@@ -64,7 +88,10 @@ fn serve(mut stream: TcpStream, state: &Arc<Mutex<State>>) {
                 .as_slice(),
         ),
         ("GET", "/api/v2/transfer/downloadLimit") => ("200 OK", "", b"0".as_slice()),
-        ("POST", "/api/v2/torrents/add") => ("200 OK", "", b"Ok.".as_slice()),
+        ("POST", "/api/v2/torrents/add") => match dialect {
+            Dialect::Legacy => ("200 OK", "", b"Ok.".as_slice()),
+            Dialect::V52 => ("204 No Content", "", b"".as_slice()),
+        },
         (
             "POST",
             "/api/v2/torrents/stop"
@@ -145,6 +172,24 @@ fn login_rejects_bad_password() {
     let (url, _, _keep) = spawn();
     let error = Session::login(&url, "admin", "wrong").expect_err("denied");
     assert!(error.to_string().contains("login"));
+}
+
+#[test]
+fn login_rejects_qbt_5_2_401() {
+    let (url, _, _keep) = spawn_v52();
+    let error = Session::login(&url, "admin", "wrong").expect_err("denied");
+    assert!(error.to_string().contains("login"));
+}
+
+#[test]
+fn login_accepts_qbt_5_2_204_and_port_cookie() {
+    let (url, state, _keep) = spawn_v52();
+    let session = Session::login(&url, "admin", "secret").expect("login");
+    session
+        .add_paused(b"dummy", "aa.torrent", "/data")
+        .expect("add");
+    let log = state.lock().expect("log").requests.join("\n");
+    assert!(log.contains("POST /api/v2/torrents/add"));
 }
 
 #[test]

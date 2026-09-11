@@ -123,7 +123,7 @@ cargo run -p tsync -- doctor --list
 
 | check | pass looks like | if it fails |
 |---|---|---|
-| `ssh` | `OpenSSH_…` | install the platform's OpenSSH client |
+| `ssh` | `OpenSSH_…` | install the platform's OpenSSH client, then [§4](#4-ssh-key-access-to-the-destination) |
 | `rsync` | `GNU rsync 3.x.x` | macOS: `brew install rsync` and fix `PATH` as above |
 | `bt_backup` | `readable, N torrents` | grant Full Disk Access to the terminal (macOS), or pass a custom state directory later |
 
@@ -134,20 +134,139 @@ Disk Access, then restart the terminal.
 
 ---
 
-## 4. Remote host
+## 4. SSH key access to the destination
 
-Buying a VPS and attaching disk is out of band. Once you have SSH key
-access to a Linux box, the stack (qBittorrent, qui, Caddy) is a directory
-of scripts that run *without* installing tsync. That lives in `deploy/`
-once it ships; until then `tsync doctor` only inspects the machine you
-are on.
+`tsync` and `rsync` both ride SSH. Password login is not enough: a prompt
+will hang an unattended transfer. The check at the end of this section is
+the requirement — `BatchMode=yes` must succeed.
+
+Replace `USER` and `HOST` with the account and address the provider gave
+you (`root@203.0.113.10`, `deploy@seedbox.example`, …).
+
+### 4.1 Create a key on this machine
+
+Skip the `ssh-keygen` line if `ls` already prints a path.
+
+```bash
+ls ~/.ssh/id_ed25519.pub 2>/dev/null \
+  || ssh-keygen -t ed25519 -C "$(whoami)@$(hostname -s)" -f ~/.ssh/id_ed25519 -N ""
+
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/id_ed25519
+chmod 644 ~/.ssh/id_ed25519.pub
+
+ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null && echo "ssh key: ok"
+# expect: ssh key: ok
+```
+
+`-N ""` is an empty passphrase so transfers do not stop for a prompt. To
+use a passphrase instead, omit `-N ""` and load the key once per login:
+
+```bash
+# macOS — store the passphrase in the Keychain
+ssh-add --apple-use-keychain ~/.ssh/id_ed25519
+
+# Linux
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/id_ed25519
+
+ssh-add -l | grep -q ED25519 && echo "ssh-agent: ok"
+# expect: ssh-agent: ok
+```
+
+### 4.2 Install the public key on the remote (pick one)
+
+**A. Provider panel (best).** At order time, paste the one line from
+`cat ~/.ssh/id_ed25519.pub` into the VPS “SSH keys” field. Skip B and C.
+
+**B. You still have a one-time password.** From this machine:
+
+```bash
+ssh-copy-id -i ~/.ssh/id_ed25519.pub USER@HOST
+```
+
+**C. Console or a password session already open on the box.** On this
+machine, copy the public key:
+
+```bash
+cat ~/.ssh/id_ed25519.pub
+# expect: ssh-ed25519 AAAA… comment
+```
+
+On the remote:
+
+```bash
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+# append the one line you copied — do not wrap it
+printf '%s\n' 'ssh-ed25519 AAAA… comment' >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+```
+
+If the provider logged you in as `root` and you will use a non-root user
+later, write that user’s `~/.ssh/authorized_keys`, not root’s.
+
+### 4.3 Optional Host alias
+
+Saves repeating `USER@HOST` and stops OpenSSH offering every key in
+`~/.ssh` (some `sshd` configs drop the connection after a few failures).
+
+```bash
+# set these to the provider address and the account that owns authorized_keys
+remote_host=203.0.113.10
+remote_user=root
+
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+touch ~/.ssh/config
+chmod 600 ~/.ssh/config
+
+cat >> ~/.ssh/config <<EOF
+Host seedbox
+  HostName ${remote_host}
+  User ${remote_user}
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+EOF
+```
+
+After this, `ssh seedbox` and `rsync … seedbox:` use the same alias.
+
+### 4.4 Check — this is the requirement
+
+`BatchMode=yes` refuses a password prompt. If this fails, transfers will
+hang. `accept-new` records the host key on first connect (OpenSSH 7.6+).
+
+```bash
+# with the alias from 4.3
+ssh -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
+  -i ~/.ssh/id_ed25519 seedbox 'echo ssh-key-auth: ok'
+# expect: ssh-key-auth: ok
+
+# without an alias
+# ssh -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
+#   -i ~/.ssh/id_ed25519 USER@HOST 'echo ssh-key-auth: ok'
+```
+
+If it asks for a password, the public key is not in that account’s
+`authorized_keys`, or the private key is not the one you think. Re-run
+4.2, then this check — do not type the password to “get past it.”
+
+---
+
+## 5. Remote host
+
+Buying a VPS and attaching disk is out of band. After [§4](#4-ssh-key-access-to-the-destination)
+succeeds, `tsync doctor` only inspects the machine you are on. The
+destination client is yours to install.
 
 Minimum on the far side, when transfers start:
 
 ```bash
-# on the remote host
+# on the remote host (after: ssh seedbox)
 rsync --version | head -1
 # expect: rsync  version 3.x.x
 
 rsync --info=help >/dev/null && echo "rsync capability: ok"
+# expect: rsync capability: ok
 ```

@@ -10,6 +10,12 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
+  public-tree:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/check-public-tree.sh
+
   test:
     runs-on: ${{ matrix.os }}
     strategy:

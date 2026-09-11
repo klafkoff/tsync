@@ -732,6 +732,7 @@ dependencies = [
  "tsync-qbt",
  "tsync-rewrite",
  "tsync-transfer",
+ "tsync-verify",
 ]
 
 [[package]]
@@ -823,6 +824,19 @@ dependencies = [
  "tsync-core",
  "tsync-fixtures",
  "tsync-plan",
+]
+
+[[package]]
+name = "tsync-verify"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror",
+ "tsync-core",
+ "tsync-fixtures",
+ "tsync-plan",
+ "tsync-qbt",
+ "tsync-rewrite",
 ]
 
 [[package]]

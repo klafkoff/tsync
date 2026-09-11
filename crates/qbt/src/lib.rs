@@ -67,6 +67,33 @@ pub fn is_seeding(state: &str) -> bool {
     matches!(state, "uploading" | "stalledUP" | "forcedUP" | "queuedUP")
 }
 
+/// Whether the client is hashing pieces. Recheck after import looks like this.
+#[must_use]
+pub fn is_checking(state: &str) -> bool {
+    matches!(state, "checkingUP" | "checkingDL" | "checkingResumeData")
+}
+
+/// Whether the client is pulling from the swarm. Dest must not do this.
+#[must_use]
+pub fn is_downloading(state: &str) -> bool {
+    matches!(
+        state,
+        "downloading" | "stalledDL" | "forcedDL" | "queuedDL" | "metaDL" | "allocating"
+    )
+}
+
+/// Whether the torrent is paused. qBittorrent 5 renamed `paused*` to `stopped*`.
+#[must_use]
+pub fn is_stopped(state: &str) -> bool {
+    matches!(state, "stoppedUP" | "stoppedDL" | "pausedUP" | "pausedDL")
+}
+
+/// Whether the client reports every piece present.
+#[must_use]
+pub fn is_piece_complete(torrent: &Torrent) -> bool {
+    torrent.amount_left == 0 && torrent.progress >= 1.0
+}
+
 /// Operations import needs. Implemented by [`Session`] and by test fakes.
 pub trait Client {
     /// Every torrent currently in the session.
@@ -170,9 +197,11 @@ impl Session {
             .send_form(&[("username", username), ("password", password)])?;
 
         let sid = cookie_sid(response.header("set-cookie")).ok_or(Error::LoginDenied)?;
+        let status = response.status();
         let mut body = String::new();
         response.into_reader().read_to_string(&mut body)?;
-        if body.trim() != "Ok." {
+        // 5.2 answers 204 + empty body + QBT_SID_<port>. Older: 200 + "Ok." + SID.
+        if status != 204 && body.trim() != "Ok." {
             return Err(Error::LoginDenied);
         }
 
@@ -207,14 +236,14 @@ impl Session {
 
     fn get(&self, path: &str) -> Result<ureq::Response, Error> {
         Ok(ureq::get(&format!("{}{path}", self.base))
-            .set("Cookie", &format!("SID={}", self.sid))
+            .set("Cookie", &self.sid)
             .call()?)
     }
 
     fn post_form(&self, path: &str, fields: &[(&str, &str)]) -> Result<String, Error> {
         let mut body = String::new();
         ureq::post(&format!("{}{path}", self.base))
-            .set("Cookie", &format!("SID={}", self.sid))
+            .set("Cookie", &self.sid)
             .send_form(fields)?
             .into_reader()
             .read_to_string(&mut body)?;
@@ -232,17 +261,17 @@ impl Client for Session {
 
     fn add_paused(&self, torrent: &[u8], filename: &str, save_path: &str) -> Result<(), Error> {
         let (content_type, body) = multipart_add(torrent, filename, save_path);
-        let mut response = String::new();
-        ureq::post(&format!("{}/api/v2/torrents/add", self.base))
-            .set("Cookie", &format!("SID={}", self.sid))
+        let response = ureq::post(&format!("{}/api/v2/torrents/add", self.base))
+            .set("Cookie", &self.sid)
             .set("Content-Type", &content_type)
-            .send_bytes(&body)?
-            .into_reader()
-            .read_to_string(&mut response)?;
-        if response.trim() == "Ok." {
+            .send_bytes(&body)?;
+        let status = response.status();
+        let mut text = String::new();
+        response.into_reader().read_to_string(&mut text)?;
+        if status == 204 || text.trim() == "Ok." {
             Ok(())
         } else {
-            Err(Error::Unexpected(response))
+            Err(Error::Unexpected(text))
         }
     }
 
@@ -281,7 +310,8 @@ fn cookie_sid(header: Option<&str>) -> Option<String> {
     let header = header?;
     header.split(';').find_map(|part| {
         let (name, value) = part.trim().split_once('=')?;
-        (name == "SID" && !value.is_empty()).then(|| value.to_owned())
+        let known = name == "SID" || name.starts_with("QBT_SID_");
+        (known && !value.is_empty()).then(|| format!("{name}={value}"))
     })
 }
 
@@ -320,19 +350,24 @@ fn push_text_part(body: &mut Vec<u8>, boundary: &str, name: &str, value: &str) {
 
 #[cfg(test)]
 mod cookie_tests {
-    use super::cookie_sid;
+    use super::{Torrent, cookie_sid};
 
     #[test]
     fn reads_sid_from_set_cookie() {
         assert_eq!(
             cookie_sid(Some("SID=abc123; HttpOnly; Path=/")),
-            Some("abc123".into())
+            Some("SID=abc123".into())
+        );
+        assert_eq!(
+            cookie_sid(Some("QBT_SID_8080=test-sid; HttpOnly; SameSite=Strict")),
+            Some("QBT_SID_8080=test-sid".into())
         );
     }
 
     #[test]
     fn rejects_empty_sid() {
         assert_eq!(cookie_sid(Some("SID=; Path=/")), None);
+        assert_eq!(cookie_sid(Some("QBT_SID_8080=; Path=/")), None);
     }
 
     #[test]
@@ -349,5 +384,37 @@ mod cookie_tests {
         assert!(!super::is_seeding("stoppedUP"));
         assert!(!super::is_seeding("missingFiles"));
         assert!(!super::is_seeding("pausedUP"));
+    }
+
+    #[test]
+    fn verify_state_helpers() {
+        assert!(super::is_checking("checkingUP"));
+        assert!(super::is_checking("checkingResumeData"));
+        assert!(!super::is_checking("stoppedUP"));
+
+        assert!(super::is_downloading("stalledDL"));
+        assert!(super::is_downloading("forcedDL"));
+        assert!(!super::is_downloading("checkingDL"));
+        assert!(!super::is_downloading("stoppedDL"));
+
+        assert!(super::is_stopped("stoppedUP"));
+        assert!(super::is_stopped("pausedUP"));
+        assert!(!super::is_stopped("stalledUP"));
+
+        let complete = Torrent {
+            hash: "aa".into(),
+            name: "x".into(),
+            state: "stoppedUP".into(),
+            progress: 1.0,
+            amount_left: 0,
+            save_path: "/data".into(),
+        };
+        let incomplete = Torrent {
+            amount_left: 512,
+            progress: 0.5,
+            ..complete.clone()
+        };
+        assert!(super::is_piece_complete(&complete));
+        assert!(!super::is_piece_complete(&incomplete));
     }
 }

@@ -27,6 +27,8 @@ pub struct Options<'a> {
     pub allow_unverified_source: bool,
     /// Inspect and refuse, but do not add.
     pub dry_run: bool,
+    /// Import only the smallest N staged torrents (same cap as `transfer`).
+    pub max_torrents: Option<usize>,
 }
 
 /// Why import could not start.
@@ -119,7 +121,8 @@ impl Report {
 /// Returns [`Error`] when staging cannot be read, the dual-seed guard fires,
 /// the source is missing, or the destination API fails before any add.
 pub fn run(opts: &Options<'_>) -> Result<Report, Error> {
-    let staged = read_staging(&opts.staging)?;
+    let mut staged = read_staging(&opts.staging)?;
+    take_smallest(&mut staged.items, opts.max_torrents);
     let unpaired = staged.unpaired;
 
     if opts.source.is_none() && !opts.allow_unverified_source {
@@ -228,6 +231,15 @@ struct StagedItem {
     hash: String,
     save_path: String,
     torrent: Vec<u8>,
+    bytes: u64,
+}
+
+fn take_smallest(items: &mut Vec<StagedItem>, max_torrents: Option<usize>) {
+    let Some(limit) = max_torrents else {
+        return;
+    };
+    items.sort_by_key(|item| item.bytes);
+    items.truncate(limit);
 }
 
 struct Pair {
@@ -291,6 +303,7 @@ fn load_item(stem: &str, torrent_path: &Path, resume_path: &Path) -> Result<Stag
         hash,
         save_path: String::from_utf8_lossy(&parsed.save_path).into_owned(),
         torrent,
+        bytes: meta.total_length(),
     })
 }
 

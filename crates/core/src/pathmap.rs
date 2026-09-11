@@ -107,18 +107,21 @@ impl Mapping {
         &self.rules
     }
 
+    /// The longest rule whose `from` is a prefix of `path`.
+    #[must_use]
+    pub fn rule_for(&self, path: &str) -> Option<&Rule> {
+        let parts = components(path);
+        self.rules.iter().find(|rule| is_prefix(&rule.from, &parts))
+    }
+
     /// Rewrites `path` if a rule's `from` is a component-wise prefix.
     #[must_use]
     pub fn apply(&self, path: &str) -> Option<String> {
         let parts = components(path);
-        for rule in &self.rules {
-            if is_prefix(&rule.from, &parts) {
-                let mut out = rule.to.clone();
-                out.extend(parts[rule.from.len()..].iter().cloned());
-                return Some(display(&out));
-            }
-        }
-        None
+        let rule = self.rule_for(path)?;
+        let mut out = rule.to.clone();
+        out.extend(parts[rule.from.len()..].iter().cloned());
+        Some(display(&out))
     }
 
     /// Pairs of rules that share a destination prefix.
@@ -275,6 +278,14 @@ mod tests {
         // LCP is /Users, which is degenerate → one rule per /Users/<name>.
         assert_eq!(mapping.rules().len(), 2);
         assert_eq!(mapping.converging().len(), 1);
+    }
+
+    #[test]
+    fn rule_for_picks_the_longest_prefix() {
+        let mapping = Mapping::derive(&["/data/music/flac"], "/dest").expect("derive");
+        let rule = mapping.rule_for("/data/music/flac/album").expect("rule");
+        assert_eq!(rule.from_display(), "/data/music/flac");
+        assert!(mapping.rule_for("/other").is_none());
     }
 
     #[test]

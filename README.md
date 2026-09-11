@@ -10,7 +10,8 @@ downloading 60 GB you are holding in your hand.
 `tsync` does that, and refuses to do anything unsafe along the way.
 
 > **Status: in development.** `tsync doctor`, `audit`, `plan`, `rewrite`,
-> `transfer`, and `import` run. Verify and later steps are not available yet.
+> `transfer`, `import`, and `verify` run. Handoff and later steps are not
+> available yet.
 
 To build from source and confirm the local environment, copy the blocks in
 [docs/setup.md](docs/setup.md).
@@ -68,14 +69,28 @@ the two agree.
 - GNU `rsync` 3.1 or newer on both ends. **macOS ships `openrsync`, which will
   not work.** `brew install rsync` puts the real binary on disk; it must also
   come first on `PATH` (Homebrew does not replace `/usr/bin/rsync`).
-- SSH key access to the destination.
+- SSH **key** access to the destination. A password prompt will hang an
+  unattended `rsync` / `tsync` run. Copy-paste key setup is
+  [docs/setup.md §4](docs/setup.md#4-ssh-key-access-to-the-destination).
 - A supported client. qBittorrent 4.x and 5.x today; the client layer is an
   interface, and adding another is a contained change.
 
 Run `tsync doctor` before anything else. It probes for capabilities rather than
 parsing version strings, and every failure it reports comes with the exact
-command that fixes it. Copy-paste setup, including the PATH trap on macOS, is
-in [docs/setup.md](docs/setup.md).
+command that fixes it. Copy-paste setup for the local toolchain, SSH keys, and
+the PATH trap on macOS is in [docs/setup.md](docs/setup.md).
+
+`tsync transfer` copies only the planned files (not a folder walk) with GNU
+rsync. `--to` is the save-path root the destination client will use, same as
+`plan` / `rewrite`. When that path is not where the host stores bytes — Docker
+`/data` on the container, `/opt/seedbox/data` on the box — pass both:
+
+```bash
+tsync transfer --to /data --rsync-to seedbox:/opt/seedbox/data
+```
+
+`--rsync-to` is a local path or `host:/abs/path` over SSH (`BatchMode=yes`).
+Re-running resumes; rsync skips files that already match.
 
 `tsync import` talks to a destination qBittorrent WebUI. It adds each staged
 `.torrent` paused, with a stop-after-check condition, then force-rechecks. A
@@ -91,6 +106,17 @@ tsync import --url http://127.0.0.1:8080 --staging /tmp/tsync-staging \
 `--source-url` is the dual-seed guard. If the source is still seeding those
 hashes, import refuses. Do not point `--url` at a client that is still seeding
 the same torrents.
+
+`tsync verify` is the gate after import: every staged hash must be
+piece-complete and still stopped. Seeding on the destination fails unless you
+pass `--allow-seeding` (after handoff). It does not announce, and it does not
+check a public listen port.
+
+```bash
+export QBT_PASSWORD
+tsync verify --url http://127.0.0.1:8080 --staging /tmp/tsync-staging \
+  --username admin
+```
 
 ---
 
