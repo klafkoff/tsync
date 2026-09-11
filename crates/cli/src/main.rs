@@ -72,8 +72,8 @@ enum Commands {
         #[arg(long)]
         to: PathBuf,
         /// Where the bytes go. Local path, or `host:/abs/path` over SSH.
-        /// Defaults to `--to`. Use this when that path is not the host path
-        /// (Docker `/data` vs `/opt/seedbox/data`).
+        /// Defaults to `--to`. Use this when the client save path is not
+        /// the path on the other machine (`/data` vs `/opt/seedbox/data`).
         #[arg(long)]
         rsync_to: Option<String>,
         /// qBittorrent `BT_backup` directory. Blank = per-OS default.

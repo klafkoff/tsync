@@ -140,8 +140,8 @@ Disk Access, then restart the terminal.
 will hang an unattended transfer. The check at the end of this section is
 the requirement — `BatchMode=yes` must succeed.
 
-Replace `USER` and `HOST` with the account and address the provider gave
-you (`root@203.0.113.10`, `deploy@seedbox.example`, …).
+Replace `USER` and `HOST` with the account and address of the other
+machine (`deploy@seedbox.example`, …).
 
 ### 4.1 Create a key on this machine
 
@@ -176,16 +176,13 @@ ssh-add -l | grep -q ED25519 && echo "ssh-agent: ok"
 
 ### 4.2 Install the public key on the remote (pick one)
 
-**A. Provider panel (best).** At order time, paste the one line from
-`cat ~/.ssh/id_ed25519.pub` into the VPS “SSH keys” field. Skip B and C.
-
-**B. You still have a one-time password.** From this machine:
+**A. Password login still works.** From this machine:
 
 ```bash
 ssh-copy-id -i ~/.ssh/id_ed25519.pub USER@HOST
 ```
 
-**C. Console or a password session already open on the box.** On this
+**B. A session is already open on the other machine.** On this
 machine, copy the public key:
 
 ```bash
@@ -203,8 +200,8 @@ printf '%s\n' 'ssh-ed25519 AAAA… comment' >> ~/.ssh/authorized_keys
 chmod 600 ~/.ssh/authorized_keys
 ```
 
-If the provider logged you in as `root` and you will use a non-root user
-later, write that user’s `~/.ssh/authorized_keys`, not root’s.
+If you connect as `root` now and will use a different user later, write
+that user’s `~/.ssh/authorized_keys`, not root’s.
 
 ### 4.3 Optional Host alias
 
@@ -212,9 +209,9 @@ Saves repeating `USER@HOST` and stops OpenSSH offering every key in
 `~/.ssh` (some `sshd` configs drop the connection after a few failures).
 
 ```bash
-# set these to the provider address and the account that owns authorized_keys
-remote_host=203.0.113.10
-remote_user=root
+# set these to the other machine and the account that owns authorized_keys
+remote_host=seedbox.example
+remote_user=deploy
 
 mkdir -p ~/.ssh
 chmod 700 ~/.ssh
@@ -254,13 +251,17 @@ If it asks for a password, the public key is not in that account’s
 
 ---
 
-## 5. Remote host
+## 5. The other machine
 
-Buying a VPS and attaching disk is out of band. After [§4](#4-ssh-key-access-to-the-destination)
-succeeds, `tsync doctor` only inspects the machine you are on. The
-destination client is yours to install.
+`tsync` does not create the destination, install qBittorrent, or start a
+container. After [§4](#4-ssh-key-access-to-the-destination) succeeds,
+`tsync doctor` only inspects the machine you are on.
 
-Minimum on the far side, when transfers start:
+The destination must already have a qBittorrent 4.x or 5.x WebAPI, disk
+for the library, and GNU rsync. Dest stays paused until `handoff`. See
+the contract in the [README](../README.md#what-the-other-machine-must-already-have).
+
+GNU rsync on the far side, when transfers start:
 
 ```bash
 # on the remote host (after: ssh seedbox)

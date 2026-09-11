@@ -20,6 +20,28 @@ Install and `PATH` checks: [docs/setup.md](docs/setup.md). Then `tsync doctor`.
 
 ---
 
+## What the other machine must already have
+
+`tsync` moves a library onto a machine that is already running. It does
+not create that machine, install qBittorrent, or start a container.
+
+On the destination, before `transfer` / `import`:
+
+- **SSH key login** that works with no password prompt.
+  `ssh -o BatchMode=yes HOST 'echo ok'` must print `ok`.
+- **GNU rsync ≥ 3.1** (same requirement as the machine you run `tsync` from).
+- **qBittorrent 4.x or 5.x** with WebAPI enabled. A WebUI bound to
+  loopback and reached through an SSH tunnel is fine.
+- **Disk and a save path** the dest client uses. `--to` is that client
+  path. `--rsync-to` is where the bytes land on the host if those two
+  paths are not the same.
+- **Dest stays paused.** Do not Start torrents there until `handoff`.
+
+How you installed that client is outside this tool. Build and `PATH`
+checks on the machine you run `tsync` from: [docs/setup.md](docs/setup.md).
+
+---
+
 ## Use it in this order
 
 Passwords come from the environment, never the command line.
@@ -34,8 +56,8 @@ tsync audit
 tsync plan --to /data
 tsync rewrite --to /data --staging /tmp/tsync-staging
 
-# --to is the path the dest *client* sees (Docker often /data).
-# --rsync-to is where the bytes actually land.
+# --to is the save path the dest client uses.
+# --rsync-to is where the bytes land on the other machine.
 tsync transfer --to /data --rsync-to seedbox:/opt/seedbox/data
 
 # Leave dest paused. Re-run transfer if it stops; rsync resumes.
