@@ -66,6 +66,30 @@ enum Commands {
         #[arg(long, default_value_t = 4)]
         budget_gib: u64,
     },
+    /// Copy torrent content by known paths. Source files are never modified.
+    Transfer {
+        /// Destination data root (local path). Also the mapping target.
+        #[arg(long)]
+        to: PathBuf,
+        /// qBittorrent `BT_backup` directory. Blank = per-OS default.
+        #[arg(long)]
+        bt_backup: Option<PathBuf>,
+        /// Resolve save paths relative to this directory (tests / relocated data).
+        #[arg(long)]
+        data_root: Option<PathBuf>,
+        /// Soft batch budget in GiB, same as `plan`.
+        #[arg(long, default_value_t = 4)]
+        budget_gib: u64,
+        /// Copy only the smallest torrents that fit in this many MiB.
+        #[arg(long)]
+        max_mib: Option<u64>,
+        /// Copy at most this many torrents.
+        #[arg(long)]
+        max_torrents: Option<usize>,
+        /// Select and report, but do not copy.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -90,6 +114,23 @@ fn main() -> ExitCode {
             data_root,
             budget_gib,
         } => rewrite(&to, &staging, bt_backup, data_root, budget_gib),
+        Commands::Transfer {
+            to,
+            bt_backup,
+            data_root,
+            budget_gib,
+            max_mib,
+            max_torrents,
+            dry_run,
+        } => transfer(
+            &to,
+            bt_backup,
+            data_root,
+            budget_gib,
+            max_mib,
+            max_torrents,
+            dry_run,
+        ),
     }
 }
 
@@ -192,6 +233,55 @@ fn rewrite(
         }
         Err(error) => {
             eprintln!("rewrite: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn transfer(
+    to: &Path,
+    bt_backup: Option<PathBuf>,
+    data_root: Option<PathBuf>,
+    budget_gib: u64,
+    max_mib: Option<u64>,
+    max_torrents: Option<usize>,
+    dry_run: bool,
+) -> ExitCode {
+    let dest = to.to_string_lossy();
+    if dest.is_empty() || dest == "/" {
+        eprintln!("transfer: --to must be a real destination root, not /");
+        return ExitCode::FAILURE;
+    }
+
+    let Some(bt_backup) = bt_backup.or_else(default_bt_backup) else {
+        eprintln!("cannot locate BT_backup (home directory unknown)");
+        eprintln!("pass --bt-backup PATH");
+        return ExitCode::FAILURE;
+    };
+
+    let budget = budget_gib.saturating_mul(1 << 30);
+    let budget = if budget == 0 { DEFAULT_BUDGET } else { budget };
+    let max_bytes = max_mib.map(|mib| mib.saturating_mul(1024 * 1024));
+
+    match tsync_transfer::run(&tsync_transfer::Options {
+        bt_backup,
+        dest: dest.into_owned(),
+        budget,
+        data_root,
+        max_bytes,
+        max_torrents,
+        dry_run,
+    }) {
+        Ok(report) => {
+            print!("{}", report.render());
+            if report.is_complete() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => {
+            eprintln!("transfer: {error}");
             ExitCode::FAILURE
         }
     }

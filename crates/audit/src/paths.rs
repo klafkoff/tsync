@@ -29,6 +29,20 @@ pub fn content_path(
     path
 }
 
+/// The torrent root rsync should copy: `save_path / name`.
+///
+/// Multi-file torrents are a directory; single-file torrents are a file of
+/// that name. `data_root` relocates the save path the same way
+/// [`content_path`] does.
+#[must_use]
+pub fn torrent_root(save_path: &str, name: &str, data_root: Option<&Path>) -> PathBuf {
+    let mut path = locate_save(save_path.as_bytes(), data_root);
+    if !name.is_empty() {
+        path.push(os_from_bytes(name.as_bytes()));
+    }
+    path
+}
+
 /// A slash-separated relative name for the report, never an absolute path.
 #[must_use]
 pub fn relative_name(meta: &Metainfo, file: &ContentFile) -> String {

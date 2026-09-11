@@ -1,0 +1,21 @@
+[package]
+name = "tsync-transfer"
+description = "Copy torrent content with rsync according to a plan."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tsync-audit = { path = "../audit" }
+tsync-core = { path = "../core" }
+tsync-plan = { path = "../plan" }
+
+[dev-dependencies]
+tempfile.workspace = true
+tsync-fixtures = { path = "../fixtures" }
+
+[lints]
+workspace = true

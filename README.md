@@ -9,8 +9,8 @@ downloading 60 GB you are holding in your hand.
 
 `tsync` does that, and refuses to do anything unsafe along the way.
 
-> **Status: in development.** `tsync doctor`, `audit`, `plan`, and `rewrite`
-> run. Transfer and later steps are not available yet.
+> **Status: in development.** `tsync doctor`, `audit`, `plan`, `rewrite`, and
+> `transfer` run. Import and later steps are not available yet.
 
 To build from source and confirm the local environment, copy the blocks in
 [docs/setup.md](docs/setup.md).

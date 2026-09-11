@@ -94,6 +94,45 @@ impl Plan {
         !self.mapping.converging().is_empty()
     }
 
+    /// Keep the smallest torrents until a byte or count cap is reached.
+    ///
+    /// A torrent that would exceed the remaining byte budget is not taken
+    /// (later items are larger, so the walk stops). Caps of `None` leave that
+    /// dimension unlimited. Re-packs the kept set with the same batch budget.
+    #[must_use]
+    pub fn take_smallest(self, max_bytes: Option<u64>, max_torrents: Option<usize>) -> Self {
+        if max_bytes.is_none() && max_torrents.is_none() {
+            return self;
+        }
+
+        let mut items: Vec<Planned> = self
+            .batches
+            .iter()
+            .flat_map(|batch| batch.torrents.iter().cloned())
+            .collect();
+        items.sort_by_key(|item| item.entry.bytes);
+
+        let mut taken = Vec::new();
+        let mut used = 0_u64;
+        for item in items {
+            if max_torrents.is_some_and(|limit| taken.len() >= limit) {
+                break;
+            }
+            if max_bytes.is_some_and(|cap| used.saturating_add(item.entry.bytes) > cap) {
+                break;
+            }
+            used = used.saturating_add(item.entry.bytes);
+            taken.push(item);
+        }
+
+        Self {
+            mapping: self.mapping,
+            batches: pack(taken, self.budget),
+            excluded: self.excluded,
+            budget: self.budget,
+        }
+    }
+
     /// Human report. Dry-run: no paths in this text are writes.
     #[must_use]
     pub fn render(&self) -> String {

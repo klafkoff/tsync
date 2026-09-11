@@ -93,6 +93,47 @@ fn skipped_torrents_are_eligible() {
 }
 
 #[test]
+fn take_smallest_stops_before_exceeding_the_byte_cap() {
+    let manifest = manifest(
+        Builder::new()
+            .complete("tiny", "/srv/music", &[("a.flac", 100)])
+            .complete("mid", "/srv/music", &[("b.flac", 200)])
+            .complete("big", "/srv/music", &[("c.flac", 400)]),
+    );
+
+    let plan = build(&manifest, "/data", DEFAULT_BUDGET)
+        .expect("plan")
+        .take_smallest(Some(350), None);
+
+    assert_eq!(plan.eligible_count(), 2);
+    assert_eq!(plan.eligible_bytes(), 300);
+    let names: Vec<_> = plan
+        .batches
+        .iter()
+        .flat_map(|batch| batch.torrents.iter())
+        .map(|item| item.entry.name.as_str())
+        .collect();
+    assert_eq!(names, ["tiny", "mid"]);
+}
+
+#[test]
+fn take_smallest_honors_a_count_cap() {
+    let manifest = manifest(
+        Builder::new()
+            .complete("a", "/srv/music", &[("a.flac", 10)])
+            .complete("b", "/srv/music", &[("b.flac", 20)])
+            .complete("c", "/srv/music", &[("c.flac", 30)]),
+    );
+
+    let plan = build(&manifest, "/data", DEFAULT_BUDGET)
+        .expect("plan")
+        .take_smallest(None, Some(1));
+
+    assert_eq!(plan.eligible_count(), 1);
+    assert_eq!(plan.batches[0].torrents[0].entry.name, "a");
+}
+
+#[test]
 fn render_is_a_dry_run_and_names_the_rewrite() {
     let manifest = manifest(Builder::new().complete("red", "/srv/music", &[("a.flac", 1024)]));
     let text = build(&manifest, "/opt/seedbox/data", DEFAULT_BUDGET)

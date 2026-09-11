@@ -484,6 +484,7 @@ dependencies = [
  "tsync-doctor",
  "tsync-plan",
  "tsync-rewrite",
+ "tsync-transfer",
 ]
 
 [[package]]
@@ -532,6 +533,18 @@ dependencies = [
 
 [[package]]
 name = "tsync-rewrite"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror",
+ "tsync-audit",
+ "tsync-core",
+ "tsync-fixtures",
+ "tsync-plan",
+]
+
+[[package]]
+name = "tsync-transfer"
 version = "0.1.0"
 dependencies = [
  "tempfile",

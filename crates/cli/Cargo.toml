@@ -18,6 +18,7 @@ tsync-audit = { path = "../audit" }
 tsync-doctor = { path = "../doctor" }
 tsync-plan = { path = "../plan" }
 tsync-rewrite = { path = "../rewrite" }
+tsync-transfer = { path = "../transfer" }
 
 [lints]
 workspace = true
