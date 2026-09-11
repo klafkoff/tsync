@@ -150,11 +150,138 @@ enum Commands {
         #[arg(long)]
         max_torrents: Option<usize>,
     },
+    /// Stop the source, then start the destination. Never the reverse.
+    Handoff {
+        /// Destination `WebUI` base URL, e.g. `<http://127.0.0.1:8080>`
+        #[arg(long)]
+        url: String,
+        /// Staging directory from `tsync rewrite`. Expected hashes come from here.
+        #[arg(long)]
+        staging: PathBuf,
+        /// Destination `WebUI` username.
+        #[arg(long)]
+        username: String,
+        /// Env var that holds the destination password. Never pass the password here.
+        #[arg(long, default_value = "QBT_PASSWORD")]
+        password_env: String,
+        /// Source `WebUI`. When set, tsync stops those hashes before dest starts.
+        #[arg(long)]
+        source_url: Option<String>,
+        /// Source username. Defaults to `--username`.
+        #[arg(long)]
+        source_username: Option<String>,
+        /// Env var for the source password. Defaults to `--password-env`.
+        #[arg(long)]
+        source_password_env: Option<String>,
+        /// Start dest after you have stopped the source yourself.
+        /// Prefer `--source-url` so tsync can confirm the source is silent.
+        #[arg(long)]
+        confirm: bool,
+        /// Classify only; do not stop or start anything.
+        #[arg(long)]
+        dry_run: bool,
+        /// Handoff only the smallest N staged torrents.
+        #[arg(long)]
+        max_torrents: Option<usize>,
+    },
+    /// Pull torrent data back. Never adds it to a local client.
+    Fetch {
+        /// Where bytes live now. Local path or `host:/abs/path`.
+        #[arg(long)]
+        from: String,
+        /// Local directory that receives the files.
+        #[arg(long)]
+        to: PathBuf,
+        /// Client-visible save root on the remote (`/data`).
+        #[arg(long)]
+        save_root: PathBuf,
+        /// Remote `WebUI`, used only to skip incomplete torrents.
+        #[arg(long)]
+        url: String,
+        /// Staging directory from `tsync rewrite`.
+        #[arg(long)]
+        staging: PathBuf,
+        /// Remote `WebUI` username.
+        #[arg(long)]
+        username: String,
+        /// Env var that holds the remote password.
+        #[arg(long, default_value = "QBT_PASSWORD")]
+        password_env: String,
+        /// `skip` (default), `complete-files`, or `all`.
+        #[arg(long, default_value = "skip")]
+        partial: String,
+        /// Classify only; do not copy.
+        #[arg(long)]
+        dry_run: bool,
+        /// Fetch only the smallest N staged torrents.
+        #[arg(long)]
+        max_torrents: Option<usize>,
+    },
+    /// Rewrite, transfer, import, verify; handoff only with `--handoff`.
+    Migrate {
+        /// Destination save-path root (same as `plan` / `rewrite`).
+        #[arg(long)]
+        to: PathBuf,
+        /// Where the bytes go. Local path or `host:/abs/path`.
+        #[arg(long)]
+        rsync_to: Option<String>,
+        /// Staging directory for rewritten resumes.
+        #[arg(long)]
+        staging: PathBuf,
+        /// Destination `WebUI`.
+        #[arg(long)]
+        url: String,
+        /// Destination username.
+        #[arg(long)]
+        username: String,
+        /// Env var for the destination password.
+        #[arg(long, default_value = "QBT_PASSWORD")]
+        password_env: String,
+        /// Source `WebUI` (import guard and handoff).
+        #[arg(long)]
+        source_url: Option<String>,
+        /// Source username. Defaults to `--username`.
+        #[arg(long)]
+        source_username: Option<String>,
+        /// Env var for the source password. Defaults to `--password-env`.
+        #[arg(long)]
+        source_password_env: Option<String>,
+        /// qBittorrent `BT_backup`. Blank = per-OS default.
+        #[arg(long)]
+        bt_backup: Option<PathBuf>,
+        /// Resolve save paths relative to this directory.
+        #[arg(long)]
+        data_root: Option<PathBuf>,
+        /// Soft batch budget in GiB.
+        #[arg(long, default_value_t = 4)]
+        budget_gib: u64,
+        /// After verify, stop the source and start dest.
+        #[arg(long)]
+        handoff: bool,
+        /// Handoff without a source API (you already stopped the source).
+        #[arg(long)]
+        confirm: bool,
+        /// Resume from this step: rewrite, transfer, import, verify, handoff.
+        #[arg(long, default_value = "rewrite")]
+        from_step: String,
+        /// Dry-run transfer, import, and handoff.
+        #[arg(long)]
+        dry_run: bool,
+        /// Cap every step to the smallest N torrents.
+        #[arg(long)]
+        max_torrents: Option<usize>,
+        /// Import without a source `WebUI`.
+        #[arg(long)]
+        allow_unverified_source: bool,
+    },
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    dispatch(Cli::parse())
+}
 
+#[allow(clippy::too_many_lines)]
+fn dispatch(cli: Cli) -> ExitCode {
     match cli.command {
         Commands::Doctor { list } => doctor(list),
         Commands::Audit {
@@ -236,6 +363,101 @@ fn main() -> ExitCode {
             &staging,
             allow_seeding,
             max_torrents,
+        ),
+        Commands::Handoff {
+            url,
+            staging,
+            username,
+            password_env,
+            source_url,
+            source_username,
+            source_password_env,
+            confirm,
+            dry_run,
+            max_torrents,
+        } => handoff(
+            WebLogin {
+                url: &url,
+                username: &username,
+                password_env: &password_env,
+            },
+            &staging,
+            source_url.as_deref().map(|source_url| WebLogin {
+                url: source_url,
+                username: source_username.as_deref().unwrap_or(&username),
+                password_env: source_password_env.as_deref().unwrap_or(&password_env),
+            }),
+            confirm,
+            dry_run,
+            max_torrents,
+        ),
+        Commands::Fetch {
+            from,
+            to,
+            save_root,
+            url,
+            staging,
+            username,
+            password_env,
+            partial,
+            dry_run,
+            max_torrents,
+        } => fetch(
+            WebLogin {
+                url: &url,
+                username: &username,
+                password_env: &password_env,
+            },
+            &from,
+            &to,
+            &save_root,
+            &staging,
+            &partial,
+            dry_run,
+            max_torrents,
+        ),
+        Commands::Migrate {
+            to,
+            rsync_to,
+            staging,
+            url,
+            username,
+            password_env,
+            source_url,
+            source_username,
+            source_password_env,
+            bt_backup,
+            data_root,
+            budget_gib,
+            handoff,
+            confirm,
+            from_step,
+            dry_run,
+            max_torrents,
+            allow_unverified_source,
+        } => migrate(
+            &to,
+            rsync_to,
+            &staging,
+            WebLogin {
+                url: &url,
+                username: &username,
+                password_env: &password_env,
+            },
+            source_url.as_deref().map(|source_url| WebLogin {
+                url: source_url,
+                username: source_username.as_deref().unwrap_or(&username),
+                password_env: source_password_env.as_deref().unwrap_or(&password_env),
+            }),
+            bt_backup,
+            data_root,
+            budget_gib,
+            handoff,
+            confirm,
+            &from_step,
+            dry_run,
+            max_torrents,
+            allow_unverified_source,
         ),
     }
 }
@@ -407,7 +629,7 @@ fn password_from_env(name: &str) -> Result<String, ExitCode> {
     match std::env::var(name) {
         Ok(value) if !value.is_empty() => Ok(value),
         _ => {
-            eprintln!("import: set {name} to the WebUI password");
+            eprintln!("tsync: set {name} to the WebUI password");
             Err(ExitCode::FAILURE)
         }
     }
@@ -452,6 +674,186 @@ fn verify(
         }
         Err(error) => {
             eprintln!("verify: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fetch(
+    remote: WebLogin<'_>,
+    from: &str,
+    to: &Path,
+    save_root: &Path,
+    staging: &Path,
+    partial: &str,
+    dry_run: bool,
+    max_torrents: Option<usize>,
+) -> ExitCode {
+    let dest = to.to_string_lossy();
+    if dest.is_empty() || dest == "/" {
+        eprintln!("fetch: --to must be a real directory, not /");
+        return ExitCode::FAILURE;
+    }
+    let partial = match partial.parse() {
+        Ok(mode) => mode,
+        Err(error) => {
+            eprintln!("fetch: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let remote = match session("fetch", remote) {
+        Ok(session) => session,
+        Err(code) => return code,
+    };
+
+    match tsync_fetch::run(&tsync_fetch::Options {
+        staging: staging.to_path_buf(),
+        from: from.to_owned(),
+        to: dest.into_owned(),
+        save_root: save_root.to_string_lossy().into_owned(),
+        remote: &remote,
+        partial,
+        dry_run,
+        max_torrents,
+    }) {
+        Ok(report) => {
+            print!("{}", report.render());
+            if report.is_complete() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => {
+            eprintln!("fetch: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
+fn migrate(
+    to: &Path,
+    rsync_to: Option<String>,
+    staging: &Path,
+    dest: WebLogin<'_>,
+    source: Option<WebLogin<'_>>,
+    bt_backup: Option<PathBuf>,
+    data_root: Option<PathBuf>,
+    budget_gib: u64,
+    do_handoff: bool,
+    confirm: bool,
+    from_step: &str,
+    dry_run: bool,
+    max_torrents: Option<usize>,
+    allow_unverified_source: bool,
+) -> ExitCode {
+    let dest_root = to.to_string_lossy();
+    if dest_root.is_empty() || dest_root == "/" {
+        eprintln!("migrate: --to must be a real destination root, not /");
+        return ExitCode::FAILURE;
+    }
+    let from_step = match from_step.parse() {
+        Ok(step) => step,
+        Err(error) => {
+            eprintln!("migrate: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let Some(bt_backup) = bt_backup.or_else(default_bt_backup) else {
+        eprintln!("cannot locate BT_backup (home directory unknown)");
+        eprintln!("pass --bt-backup PATH");
+        return ExitCode::FAILURE;
+    };
+    let dest = match session("migrate", dest) {
+        Ok(session) => session,
+        Err(code) => return code,
+    };
+    let source = match source {
+        Some(login) => match session("migrate source", login) {
+            Ok(session) => Some(session),
+            Err(code) => return code,
+        },
+        None => None,
+    };
+    let budget = budget_gib.saturating_mul(1 << 30);
+    let budget = if budget == 0 { DEFAULT_BUDGET } else { budget };
+
+    match tsync_migrate::run(&tsync_migrate::Options {
+        bt_backup,
+        staging: staging.to_path_buf(),
+        dest: dest_root.into_owned(),
+        rsync_to,
+        data_root,
+        budget,
+        dest_client: &dest,
+        source_client: source
+            .as_ref()
+            .map(|session| session as &dyn tsync_qbt::Client),
+        allow_unverified_source,
+        handoff: do_handoff,
+        confirm,
+        from_step,
+        dry_run,
+        max_torrents,
+    }) {
+        Ok(report) => {
+            print!("{}", report.render());
+            if report.is_complete() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => {
+            eprintln!("migrate: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn handoff(
+    dest: WebLogin<'_>,
+    staging: &Path,
+    source: Option<WebLogin<'_>>,
+    confirm: bool,
+    dry_run: bool,
+    max_torrents: Option<usize>,
+) -> ExitCode {
+    let dest = match session("handoff", dest) {
+        Ok(session) => session,
+        Err(code) => return code,
+    };
+
+    let source = match source {
+        Some(login) => match session("handoff source", login) {
+            Ok(session) => Some(session),
+            Err(code) => return code,
+        },
+        None => None,
+    };
+
+    match tsync_handoff::run(&tsync_handoff::Options {
+        staging: staging.to_path_buf(),
+        dest: &dest,
+        source: source
+            .as_ref()
+            .map(|session| session as &dyn tsync_qbt::Client),
+        confirm,
+        dry_run,
+        max_torrents,
+    }) {
+        Ok(report) => {
+            print!("{}", report.render());
+            if report.is_complete() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => {
+            eprintln!("handoff: {error}");
             ExitCode::FAILURE
         }
     }

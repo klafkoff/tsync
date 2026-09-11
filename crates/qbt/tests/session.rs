@@ -18,6 +18,8 @@ struct State {
 #[derive(Clone, Copy)]
 enum Dialect {
     Legacy,
+    /// `WebAPI` 2.9 — `pause` / `resume`, not `stop` / `start`.
+    V29,
     V52,
 }
 
@@ -65,7 +67,7 @@ fn serve(mut stream: TcpStream, state: &Arc<Mutex<State>>, dialect: Dialect) {
 
     let (status, headers, reply) = match (method.as_str(), path.as_str()) {
         ("POST", "/api/v2/auth/login") if body.contains("password=secret") => match dialect {
-            Dialect::Legacy => (
+            Dialect::Legacy | Dialect::V29 => (
                 "200 OK",
                 "Set-Cookie: SID=test-sid; HttpOnly; Path=/\r\n",
                 b"Ok.".as_slice(),
@@ -77,10 +79,13 @@ fn serve(mut stream: TcpStream, state: &Arc<Mutex<State>>, dialect: Dialect) {
             ),
         },
         ("POST", "/api/v2/auth/login") => match dialect {
-            Dialect::Legacy => ("200 OK", "", b"Fails.".as_slice()),
+            Dialect::Legacy | Dialect::V29 => ("200 OK", "", b"Fails.".as_slice()),
             Dialect::V52 => ("401 Unauthorized", "", b"Unauthorized".as_slice()),
         },
-        ("GET", "/api/v2/app/webapiVersion") => ("200 OK", "", b"2.11.2".as_slice()),
+        ("GET", "/api/v2/app/webapiVersion") => match dialect {
+            Dialect::V29 => ("200 OK", "", b"2.9.3".as_slice()),
+            Dialect::Legacy | Dialect::V52 => ("200 OK", "", b"2.11.2".as_slice()),
+        },
         ("GET", "/api/v2/torrents/info") => (
             "200 OK",
             "",
@@ -88,13 +93,26 @@ fn serve(mut stream: TcpStream, state: &Arc<Mutex<State>>, dialect: Dialect) {
                 .as_slice(),
         ),
         ("GET", "/api/v2/transfer/downloadLimit") => ("200 OK", "", b"0".as_slice()),
+        ("GET", path) if path.starts_with("/api/v2/torrents/files") => (
+            "200 OK",
+            "",
+            br#"[{"name":"red/a.flac","size":1024,"progress":1.0}]"#.as_slice(),
+        ),
         ("POST", "/api/v2/torrents/add") => match dialect {
-            Dialect::Legacy => ("200 OK", "", b"Ok.".as_slice()),
-            Dialect::V52 => ("204 No Content", "", b"".as_slice()),
+            Dialect::Legacy | Dialect::V29 => ("200 OK", "", b"Ok.".as_slice()),
+            Dialect::V52 => (
+                "200 OK",
+                "",
+                br#"{"added_torrent_ids":["aa"],"failure_count":0,"pending_count":0,"success_count":1}"#
+                    .as_slice(),
+            ),
         },
         (
             "POST",
             "/api/v2/torrents/stop"
+            | "/api/v2/torrents/start"
+            | "/api/v2/torrents/pause"
+            | "/api/v2/torrents/resume"
             | "/api/v2/torrents/recheck"
             | "/api/v2/transfer/setDownloadLimit",
         ) => ("200 OK", "", b"".as_slice()),
@@ -204,14 +222,38 @@ fn login_lists_and_adds_paused() {
         .add_paused(b"dummy", "aa.torrent", "/data")
         .expect("add");
     session.stop("aa").expect("stop");
+    session.start("aa").expect("start");
     session.recheck("aa").expect("recheck");
     assert_eq!(session.download_limit().expect("limit"), 0);
     session.set_download_limit(1).expect("set limit");
+    let files = session.files("aa").expect("files");
+    assert_eq!(files.len(), 1);
+    assert!(files[0].progress >= 1.0);
 
     let log = state.lock().expect("log").requests.join("\n");
     assert!(log.contains("POST /api/v2/torrents/add"));
     assert!(log.contains("name=\"paused\""));
     assert!(log.contains("FilesChecked"));
     assert!(log.contains("POST /api/v2/torrents/stop"));
+    assert!(log.contains("POST /api/v2/torrents/start"));
     assert!(!log.contains("POST /api/v2/torrents/pause"));
+    assert!(!log.contains("POST /api/v2/torrents/resume"));
+}
+
+fn spawn_v29() -> (String, Arc<Mutex<State>>, thread::JoinHandle<()>) {
+    spawn_dialect(Dialect::V29)
+}
+
+#[test]
+fn login_uses_pause_and_resume_on_webapi_2_9() {
+    let (url, state, _keep) = spawn_v29();
+    let session = Session::login(&url, "admin", "secret").expect("login");
+    session.stop("aa").expect("pause");
+    session.start("aa").expect("resume");
+
+    let log = state.lock().expect("log").requests.join("\n");
+    assert!(log.contains("POST /api/v2/torrents/pause"));
+    assert!(log.contains("POST /api/v2/torrents/resume"));
+    assert!(!log.contains("POST /api/v2/torrents/stop"));
+    assert!(!log.contains("POST /api/v2/torrents/start"));
 }

@@ -155,7 +155,12 @@ pub(crate) fn copy_plan(
 
     let mut copied = 0;
     for group in groups {
-        match rsync_files(rsync, target, &group) {
+        match copy_relatives(
+            rsync,
+            &Target::Local(group.source_root.clone()),
+            target,
+            &group.files,
+        ) {
             Ok(()) => copied += group.torrents.len(),
             Err(reason) => {
                 for id in group.torrents {
@@ -196,12 +201,17 @@ fn collect_relatives(opts: &Options, item: &Planned, rule: &Rule) -> Result<Vec<
     Ok(relatives)
 }
 
-fn rsync_files(rsync: &Path, target: &Target, group: &Group) -> Result<(), String> {
-    if group.files.is_empty() {
+/// Copy explicit relative paths from `from` to `to` with GNU rsync.
+pub(crate) fn copy_relatives(
+    rsync: &Path,
+    from: &Target,
+    to: &Target,
+    files: &[PathBuf],
+) -> Result<(), String> {
+    if files.is_empty() {
         return Ok(());
     }
-    let list = write_files_from(&group.files).map_err(|error| format!("files-from: {error}"))?;
-    let dest = target.rsync_url();
+    let list = write_files_from(files).map_err(|error| format!("files-from: {error}"))?;
     let mut cmd = Command::new(rsync);
     cmd.arg("-a")
         .arg("--partial")
@@ -210,12 +220,12 @@ fn rsync_files(rsync: &Path, target: &Target, group: &Group) -> Result<(), Strin
         .arg("--from0")
         .arg("--files-from")
         .arg(&list);
-    if matches!(target, Target::Remote { .. }) {
+    if matches!(from, Target::Remote { .. }) || matches!(to, Target::Remote { .. }) {
         cmd.arg("-e").arg("ssh -o BatchMode=yes");
     }
     cmd.arg("--")
-        .arg(slash_dir(&group.source_root))
-        .arg(slash_dir_str(&dest));
+        .arg(slash_dir_str(&from.rsync_url()))
+        .arg(slash_dir_str(&to.rsync_url()));
     let status = cmd.status();
     let _ = fs::remove_file(&list);
     let status = status.map_err(|error| format!("rsync: {error}"))?;
@@ -224,12 +234,6 @@ fn rsync_files(rsync: &Path, target: &Target, group: &Group) -> Result<(), Strin
     } else {
         Err(format!("rsync exited {status}"))
     }
-}
-
-fn slash_dir(path: &Path) -> PathBuf {
-    let mut out = path.to_path_buf();
-    out.push("");
-    out
 }
 
 fn slash_dir_str(spec: &str) -> String {

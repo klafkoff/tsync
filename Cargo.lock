@@ -727,7 +727,10 @@ dependencies = [
  "tsync-audit",
  "tsync-core",
  "tsync-doctor",
+ "tsync-fetch",
+ "tsync-handoff",
  "tsync-import",
+ "tsync-migrate",
  "tsync-plan",
  "tsync-qbt",
  "tsync-rewrite",
@@ -759,6 +762,21 @@ name = "tsync-doctor"
 version = "0.1.0"
 
 [[package]]
+name = "tsync-fetch"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror",
+ "tsync-audit",
+ "tsync-core",
+ "tsync-fixtures",
+ "tsync-plan",
+ "tsync-qbt",
+ "tsync-rewrite",
+ "tsync-transfer",
+]
+
+[[package]]
 name = "tsync-fixtures"
 version = "0.1.0"
 dependencies = [
@@ -766,6 +784,19 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tsync-core",
+]
+
+[[package]]
+name = "tsync-handoff"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror",
+ "tsync-fixtures",
+ "tsync-plan",
+ "tsync-qbt",
+ "tsync-rewrite",
+ "tsync-verify",
 ]
 
 [[package]]
@@ -779,6 +810,22 @@ dependencies = [
  "tsync-plan",
  "tsync-qbt",
  "tsync-rewrite",
+]
+
+[[package]]
+name = "tsync-migrate"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror",
+ "tsync-fixtures",
+ "tsync-handoff",
+ "tsync-import",
+ "tsync-plan",
+ "tsync-qbt",
+ "tsync-rewrite",
+ "tsync-transfer",
+ "tsync-verify",
 ]
 
 [[package]]

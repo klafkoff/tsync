@@ -22,6 +22,9 @@ tsync-transfer = { path = "../transfer" }
 tsync-qbt = { path = "../qbt" }
 tsync-import = { path = "../import" }
 tsync-verify = { path = "../verify" }
+tsync-handoff = { path = "../handoff" }
+tsync-fetch = { path = "../fetch" }
+tsync-migrate = { path = "../migrate" }
 
 [lints]
 workspace = true

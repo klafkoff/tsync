@@ -101,7 +101,7 @@ impl Report {
 ///
 /// Returns [`Error`] when staging cannot be read or the destination API fails.
 pub fn run(opts: &Options<'_>) -> Result<Report, Error> {
-    let expected = read_expected(&opts.staging, opts.max_torrents)?;
+    let expected = expected_hashes(&opts.staging, opts.max_torrents)?;
     let listed = opts.dest.list()?;
     let dest: BTreeMap<String, Torrent> = listed
         .into_iter()
@@ -166,7 +166,12 @@ fn classify(torrent: &Torrent, allow_seeding: bool) -> Option<String> {
     Some(format!("unexpected state {}", torrent.state))
 }
 
-fn read_expected(
+/// Staged infohashes, smallest first, then truncated by `max_torrents`.
+///
+/// # Errors
+///
+/// Returns [`Error::Staging`] when the directory cannot be listed.
+pub fn expected_hashes(
     staging: &Path,
     max_torrents: Option<usize>,
 ) -> Result<BTreeSet<String>, Error> {

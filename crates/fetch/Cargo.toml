@@ -1,0 +1,24 @@
+[package]
+name = "tsync-fetch"
+description = "Pull torrent data back without importing it into a client."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tsync-audit = { path = "../audit" }
+tsync-core = { path = "../core" }
+tsync-qbt = { path = "../qbt" }
+tsync-transfer = { path = "../transfer" }
+
+[dev-dependencies]
+tempfile.workspace = true
+tsync-fixtures = { path = "../fixtures" }
+tsync-plan = { path = "../plan" }
+tsync-rewrite = { path = "../rewrite" }
+
+[lints]
+workspace = true

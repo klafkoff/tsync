@@ -21,11 +21,20 @@ impl Client for Fake {
         Ok(self.list.clone())
     }
 
-    fn add_paused(&self, _torrent: &[u8], _filename: &str, _save_path: &str) -> Result<(), QbtError> {
+    fn add_paused(
+        &self,
+        _torrent: &[u8],
+        _filename: &str,
+        _save_path: &str,
+    ) -> Result<(), QbtError> {
         Ok(())
     }
 
     fn stop(&self, _hash: &str) -> Result<(), QbtError> {
+        Ok(())
+    }
+
+    fn start(&self, _hash: &str) -> Result<(), QbtError> {
         Ok(())
     }
 
@@ -53,7 +62,11 @@ fn torrent(hash: &str, state: &str, progress: f64, amount_left: u64) -> Torrent 
     }
 }
 
-fn staged() -> (tempfile::TempDir, tsync_fixtures::Library, tempfile::TempDir) {
+fn staged() -> (
+    tempfile::TempDir,
+    tsync_fixtures::Library,
+    tempfile::TempDir,
+) {
     let root = tempfile::tempdir().expect("root");
     let library = Builder::new()
         .complete("red", "/srv/music", &[("a.flac", 1024)])
@@ -192,4 +205,26 @@ fn incomplete_checking_missing_and_downloading_each_fail() {
     .expect("downloading");
     assert_eq!(downloading.failed.len(), 1);
     assert!(downloading.failed[0].reason.contains("downloading"));
+}
+
+#[test]
+fn max_torrents_verifies_only_the_smallest() {
+    let (_root, library, staging) = staged();
+    let dest = Fake::with(
+        library
+            .torrents
+            .iter()
+            .map(|item| torrent(&item.infohash, "stoppedUP", 1.0, 0))
+            .collect(),
+    );
+    let report = run(&Options {
+        staging: staging.path().to_path_buf(),
+        dest: &dest,
+        allow_seeding: false,
+        max_torrents: Some(1),
+    })
+    .expect("verify");
+    assert!(report.is_complete());
+    assert_eq!(report.ready, 1);
+    assert_eq!(report.missing, 0);
 }

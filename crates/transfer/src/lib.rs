@@ -193,6 +193,22 @@ pub fn run(opts: &Options) -> Result<Report, Error> {
     })
 }
 
+/// Copy a list of relative paths from `from` to `to` (local or `host:/path`).
+///
+/// # Errors
+///
+/// Returns [`Error::Rsync`] when rsync is missing or the copy fails.
+pub fn copy_relatives(from: &str, to: &str, files: &[PathBuf]) -> Result<(), Error> {
+    if files.is_empty() {
+        return Ok(());
+    }
+    let rsync = rsync::resolve_binary().map_err(Error::Rsync)?;
+    let from = rsync::Target::parse(from).map_err(Error::Rsync)?;
+    let to = rsync::Target::parse(to).map_err(Error::Rsync)?;
+    rsync::ensure_dest(&to).map_err(Error::Rsync)?;
+    rsync::copy_relatives(&rsync, &from, &to, files).map_err(Error::Rsync)
+}
+
 fn short_id(id: &str) -> String {
     if id.len() > 12 {
         format!("{}…", &id[..12])

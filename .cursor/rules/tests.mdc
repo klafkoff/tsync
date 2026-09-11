@@ -1,0 +1,26 @@
+---
+description: Test new behavior against real replies, not assumed ones
+alwaysApply: true
+---
+
+# Tests travel with the code
+
+Every crate change that can fail in production gets a test in the same
+change. Do not leave “we will test it on the box” as the only check.
+
+## WebAPI and other external dialects
+
+When a server replies in a way we did not model, **paste that body into a
+test** (redact secrets and hostnames). Then make the client accept it.
+
+The qBittorrent 5.2.3 `torrents/add` JSON
+(`success_count` / `added_torrent_ids`) looked like success on the wire
+and FAIL in `tsync import` because the fixture still used `204` + empty
+or `Ok.`. That class of bug is a missing fixture, not a missing manual run.
+
+## What “done” means
+
+- Unit or fake-server test covers the new branch.
+- A wrong assumption in an existing fake (legacy-only reply) is updated,
+  not left as the sole 5.x stand-in.
+- `cargo test` for the touched crate passes before you move on.

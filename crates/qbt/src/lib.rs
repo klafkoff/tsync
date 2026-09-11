@@ -2,8 +2,8 @@
 //!
 //! Blocking on purpose: the import path is a short sequence of calls, and
 //! keeping Tokio out of this crate matches the rest of the workspace. The
-//! [`Client`] trait is what `tsync-import` depends on, so tests can fake a
-//! destination without opening a socket.
+//! [`Client`] trait is what import, verify, and handoff depend on, so tests
+//! can fake a client without opening a socket.
 
 use std::io::Read;
 
@@ -59,6 +59,19 @@ pub struct Torrent {
     /// Save path, if present.
     #[serde(default)]
     pub save_path: String,
+}
+
+/// One content file as `torrents/files` reports it.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct TorrentFile {
+    /// Path relative to the torrent save path, as the client reports it.
+    pub name: String,
+    /// Declared size in bytes.
+    #[serde(default)]
+    pub size: u64,
+    /// 0.0–1.0 as the client reports it.
+    #[serde(default)]
+    pub progress: f64,
 }
 
 /// Whether `state` is an announcing seed. Used by the dual-seed guard.
@@ -117,6 +130,13 @@ pub trait Client {
     /// Returns [`Error`] when the API call fails.
     fn stop(&self, hash: &str) -> Result<(), Error>;
 
+    /// Start (qBittorrent 5) or resume (older) a torrent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] when the API call fails.
+    fn start(&self, hash: &str) -> Result<(), Error>;
+
     /// Force a recheck. Hashing does not need the network.
     ///
     /// # Errors
@@ -137,6 +157,18 @@ pub trait Client {
     ///
     /// Returns [`Error`] when the API call fails.
     fn set_download_limit(&self, bytes_per_sec: i64) -> Result<(), Error>;
+
+    /// Per-file progress for one torrent. Used by fetch to skip incomplete files.
+    ///
+    /// The default is empty. Session implements the real call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] when the API call fails.
+    fn files(&self, hash: &str) -> Result<Vec<TorrentFile>, Error> {
+        let _ = hash;
+        Ok(Vec::new())
+    }
 }
 
 impl<T: Client + ?Sized> Client for &T {
@@ -149,6 +181,9 @@ impl<T: Client + ?Sized> Client for &T {
     fn stop(&self, hash: &str) -> Result<(), Error> {
         (*self).stop(hash)
     }
+    fn start(&self, hash: &str) -> Result<(), Error> {
+        (*self).start(hash)
+    }
     fn recheck(&self, hash: &str) -> Result<(), Error> {
         (*self).recheck(hash)
     }
@@ -157,6 +192,9 @@ impl<T: Client + ?Sized> Client for &T {
     }
     fn set_download_limit(&self, bytes_per_sec: i64) -> Result<(), Error> {
         (*self).set_download_limit(bytes_per_sec)
+    }
+    fn files(&self, hash: &str) -> Result<Vec<TorrentFile>, Error> {
+        (*self).files(hash)
     }
 }
 
@@ -183,6 +221,8 @@ pub struct Session {
     sid: String,
     /// qBittorrent 5 renamed pause → stop. Detected at login.
     stop_path: &'static str,
+    /// Matching start / resume endpoint.
+    start_path: &'static str,
 }
 
 impl Session {
@@ -209,14 +249,18 @@ impl Session {
             base,
             sid,
             stop_path: "/api/v2/torrents/stop",
+            start_path: "/api/v2/torrents/start",
         };
-        let stop_path = match session.webapi_version() {
-            Ok(version) if uses_stop_endpoint(&version) => "/api/v2/torrents/stop",
-            Ok(_) => "/api/v2/torrents/pause",
-            Err(_) => "/api/v2/torrents/stop",
+        let (stop_path, start_path) = match session.webapi_version() {
+            Ok(version) if uses_stop_endpoint(&version) => {
+                ("/api/v2/torrents/stop", "/api/v2/torrents/start")
+            }
+            Ok(_) => ("/api/v2/torrents/pause", "/api/v2/torrents/resume"),
+            Err(_) => ("/api/v2/torrents/stop", "/api/v2/torrents/start"),
         };
         Ok(Self {
             stop_path,
+            start_path,
             ..session
         })
     }
@@ -268,7 +312,7 @@ impl Client for Session {
         let status = response.status();
         let mut text = String::new();
         response.into_reader().read_to_string(&mut text)?;
-        if status == 204 || text.trim() == "Ok." {
+        if add_accepted(status, &text) {
             Ok(())
         } else {
             Err(Error::Unexpected(text))
@@ -277,6 +321,11 @@ impl Client for Session {
 
     fn stop(&self, hash: &str) -> Result<(), Error> {
         self.post_form(self.stop_path, &[("hashes", hash)])?;
+        Ok(())
+    }
+
+    fn start(&self, hash: &str) -> Result<(), Error> {
+        self.post_form(self.start_path, &[("hashes", hash)])?;
         Ok(())
     }
 
@@ -295,6 +344,11 @@ impl Client for Session {
         self.post_form("/api/v2/transfer/setDownloadLimit", &[("limit", &value)])?;
         Ok(())
     }
+
+    fn files(&self, hash: &str) -> Result<Vec<TorrentFile>, Error> {
+        let body = self.get_text(&format!("/api/v2/torrents/files?hash={hash}"))?;
+        serde_json::from_str(&body).map_err(|error| Error::Unexpected(error.to_string()))
+    }
 }
 
 /// qBittorrent 5 / `WebAPI` 2.11 renamed `pause`/`resume` to `stop`/`start`.
@@ -304,6 +358,34 @@ pub fn uses_stop_endpoint(webapi_version: &str) -> bool {
     let major: u32 = parts.next().and_then(|part| part.parse().ok()).unwrap_or(0);
     let minor: u32 = parts.next().and_then(|part| part.parse().ok()).unwrap_or(0);
     major > 2 || (major == 2 && minor >= 11)
+}
+
+/// Older `WebAPI`: 200 + `Ok.` or 204 empty. 5.2.3 also returns JSON
+/// `{"success_count":1,"failure_count":0,"added_torrent_ids":[...]}`.
+fn add_accepted(status: u16, body: &str) -> bool {
+    if status == 204 {
+        return true;
+    }
+    let body = body.trim();
+    if body == "Ok." {
+        return true;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    let failures = value
+        .get("failure_count")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let successes = value
+        .get("success_count")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let added = value
+        .get("added_torrent_ids")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|ids| !ids.is_empty());
+    failures == 0 && (successes > 0 || added)
 }
 
 fn cookie_sid(header: Option<&str>) -> Option<String> {
@@ -416,5 +498,26 @@ mod cookie_tests {
         };
         assert!(super::is_piece_complete(&complete));
         assert!(!super::is_piece_complete(&incomplete));
+    }
+
+    #[test]
+    fn add_accepts_legacy_ok_204_and_52_json() {
+        assert!(super::add_accepted(204, ""));
+        assert!(super::add_accepted(200, "Ok."));
+        assert!(super::add_accepted(
+            200,
+            r#"{"added_torrent_ids":["aa"],"failure_count":0,"pending_count":0,"success_count":1}"#
+        ));
+        // Body captured from qBittorrent 5.2.3 torrents/add. Treating this as
+        // Unexpected is what made import report FAIL after a successful add.
+        assert!(super::add_accepted(
+            200,
+            r#"{"added_torrent_ids":["f1f6d02d937b00fce8e0a2b31ab9cf37ba57b8af"],"failure_count":0,"pending_count":0,"success_count":1}"#
+        ));
+        assert!(!super::add_accepted(200, "Fails."));
+        assert!(!super::add_accepted(
+            200,
+            r#"{"added_torrent_ids":[],"failure_count":1,"success_count":0}"#
+        ));
     }
 }

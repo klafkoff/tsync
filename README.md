@@ -9,9 +9,8 @@ downloading 60 GB you are holding in your hand.
 
 `tsync` does that, and refuses to do anything unsafe along the way.
 
-> **Status: in development.** `tsync doctor`, `audit`, `plan`, `rewrite`,
-> `transfer`, `import`, and `verify` run. Handoff and later steps are not
-> available yet.
+> **Status: in development.** The CLI implements `doctor` through `migrate`.
+> Live handoff against two real clients is still the unproven step.
 
 To build from source and confirm the local environment, copy the blocks in
 [docs/setup.md](docs/setup.md).
@@ -116,6 +115,42 @@ check a public listen port.
 export QBT_PASSWORD
 tsync verify --url http://127.0.0.1:8080 --staging /tmp/tsync-staging \
   --username admin
+```
+
+`tsync handoff` is the only command that starts the destination. It stops each
+source hash, confirms the source is silent, then starts that hash on dest.
+Without `--source-url` it only reports which dest torrents are ready. Pass
+`--confirm` only after you have stopped the source yourself.
+
+```bash
+export QBT_PASSWORD
+export QBT_SOURCE_PASSWORD
+tsync handoff --url http://127.0.0.1:8080 --source-url http://127.0.0.1:8081 \
+  --staging /tmp/tsync-staging --username admin \
+  --source-password-env QBT_SOURCE_PASSWORD
+```
+
+Do not Start dest torrents in the WebUI. Handoff is what starts them.
+
+`tsync fetch` copies data back. It never adds torrents to a local client, so
+the remote can keep seeding. Incomplete torrents are skipped unless you pass
+`--partial complete-files` or `--partial all`.
+
+```bash
+export QBT_PASSWORD
+tsync fetch --from seedbox:/opt/seedbox/data --to ~/Music \
+  --save-root /data --url http://127.0.0.1:8080 \
+  --staging /tmp/tsync-staging --username admin
+```
+
+`tsync migrate` runs rewrite → transfer → import → verify. Dest stays paused
+unless you also pass `--handoff`.
+
+```bash
+export QBT_PASSWORD
+tsync migrate --to /data --rsync-to seedbox:/opt/seedbox/data \
+  --staging /tmp/tsync-staging --url http://127.0.0.1:8080 \
+  --source-url http://127.0.0.1:8081 --username admin
 ```
 
 ---

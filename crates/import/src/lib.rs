@@ -48,8 +48,11 @@ pub enum Error {
         "dual-seed guard needs --source-url (or pass --allow-unverified-source if you accept the risk)"
     )]
     SourceRequired,
-    /// Source is still seeding at least one torrent we would add.
-    #[error("source is still seeding {} torrent(s); stop them before import", .0.len())]
+    /// Destination is already announcing a hash the source still seeds.
+    #[error(
+        "destination is already seeding {} torrent(s) the source still announces",
+        .0.len()
+    )]
     DualSeed(Vec<String>),
     /// A `WebAPI` call failed.
     #[error(transparent)]
@@ -130,11 +133,12 @@ pub fn run(opts: &Options<'_>) -> Result<Report, Error> {
     }
 
     if let Some(source) = opts.source {
-        let seeding: BTreeSet<String> = seeding_hashes(source)?.into_iter().collect();
+        let source_seeding: BTreeSet<String> = seeding_hashes(source)?.into_iter().collect();
+        let dest_seeding: BTreeSet<String> = seeding_hashes(opts.dest)?.into_iter().collect();
         let overlap: Vec<String> = staged
             .items
             .iter()
-            .filter(|item| seeding.contains(&item.hash))
+            .filter(|item| source_seeding.contains(&item.hash) && dest_seeding.contains(&item.hash))
             .map(|item| item.hash.clone())
             .collect();
         if !overlap.is_empty() {
@@ -178,6 +182,12 @@ pub fn run(opts: &Options<'_>) -> Result<Report, Error> {
     for item in &staged.items {
         if dest_hashes.contains(&item.hash) {
             already_present += 1;
+            if let Err(reason) = finish_import(opts.dest, &item.hash) {
+                failed.push(Failure {
+                    id: item.hash.clone(),
+                    reason,
+                });
+            }
             continue;
         }
         match import_one(opts.dest, item) {
@@ -205,9 +215,12 @@ fn import_one(dest: &dyn Client, item: &StagedItem) -> Result<(), String> {
         &item.save_path,
     )
     .map_err(|error| error.to_string())?;
-    dest.stop(&item.hash).map_err(|error| error.to_string())?;
-    dest.recheck(&item.hash)
-        .map_err(|error| error.to_string())?;
+    finish_import(dest, &item.hash)
+}
+
+fn finish_import(dest: &dyn Client, hash: &str) -> Result<(), String> {
+    dest.stop(hash).map_err(|error| error.to_string())?;
+    dest.recheck(hash).map_err(|error| error.to_string())?;
     Ok(())
 }
 

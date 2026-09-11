@@ -72,6 +72,10 @@ impl Client for Fake {
         Ok(())
     }
 
+    fn start(&self, _hash: &str) -> Result<(), QbtError> {
+        Ok(())
+    }
+
     fn recheck(&self, hash: &str) -> Result<(), QbtError> {
         self.rechecked
             .lock()
@@ -132,10 +136,10 @@ fn refuses_without_a_source_unless_explicitly_allowed() {
 }
 
 #[test]
-fn refuses_when_the_source_still_seeds() {
+fn refuses_when_dest_and_source_both_seed() {
     let (_root, library, staging) = staged();
     let hash = library.torrents[0].infohash.clone();
-    let dest = Fake::empty();
+    let dest = Fake::seeding(&hash);
     let source = Fake::seeding(&hash);
 
     let error = run(&Options {
@@ -147,8 +151,28 @@ fn refuses_when_the_source_still_seeds() {
         max_torrents: None,
     })
     .expect_err("dual seed");
-    assert!(error.to_string().contains("still seeding"));
+    assert!(error.to_string().contains("already seeding"));
     assert!(dest.added.lock().expect("added").is_empty());
+}
+
+#[test]
+fn source_may_still_seed_when_dest_is_empty() {
+    let (_root, library, staging) = staged();
+    let hash = library.torrents[0].infohash.clone();
+    let dest = Fake::empty();
+    let source = Fake::seeding(&hash);
+
+    let report = run(&Options {
+        staging: staging.path().to_path_buf(),
+        dest: &dest,
+        source: Some(&source),
+        allow_unverified_source: false,
+        dry_run: false,
+        max_torrents: None,
+    })
+    .expect("import");
+    assert_eq!(report.imported, 2);
+    assert_eq!(dest.added.lock().expect("added").len(), 2);
 }
 
 #[test]
@@ -203,6 +227,7 @@ fn skips_hashes_already_on_the_destination() {
     assert_eq!(report.already_present, 1);
     assert_eq!(report.imported, 1);
     assert_eq!(dest.added.lock().expect("added").len(), 1);
+    assert_eq!(dest.rechecked.lock().expect("rechecked").len(), 2);
 }
 
 #[test]
