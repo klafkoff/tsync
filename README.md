@@ -1,174 +1,116 @@
 # tsync
 
-Move a torrent library between machines without re-downloading it.
+Move a qBittorrent library to another machine **without re-downloading**,
+then start the destination only after the source is silent.
 
-If you seed from a laptop and want to move to a server, the data transfer is the
-easy part. The hard part is convincing the destination client that the files it
-just received are the files it already has, so it resumes seeding instead of
-downloading 60 GB you are holding in your hand.
-
-`tsync` does that, and refuses to do anything unsafe along the way.
-
-> **Status: in development.** The CLI implements `doctor` through `migrate`.
-> Live handoff against two real clients is still the unproven step.
-
-To build from source and confirm the local environment, copy the blocks in
-[docs/setup.md](docs/setup.md).
-
----
-
-## What it does
+Install and `PATH` checks: [docs/setup.md](docs/setup.md). Then `tsync doctor`.
 
 ```
-audit      inventory a local client: torrents, files, completion state
-plan       derive path mappings and preview every change as a diff
-rewrite    rewrite resume data for the destination's paths
-transfer   copy data with resumable, progress-reporting rsync
-import     add torrents to the destination, paused, and force a recheck
-verify     confirm the destination has complete, valid data
-handoff    stop the source and start the destination, in that order
-fetch      pull data back, with partial-torrent handling and top-up
-migrate    move an entire setup to a different host
-doctor     verify dependencies and environment on both ends
+1  audit     what is on disk
+2  plan      path mapping (writes nothing)
+3  rewrite   dest resumes → staging dir (never touches originals)
+4  transfer  rsync the files (safe to re-run; resumes)
+5  import    add to dest **paused**, then recheck
+6  verify    dest must be piece-complete and still stopped
+7  handoff   stop source, then start dest — never the reverse
 ```
 
----
-
-## Design principles
-
-These are constraints the tool enforces, not advice it offers.
-
-**Never re-download.** Torrents are imported paused, rechecked while paused, and
-resumed only when verified complete. Layered guards — a stop condition, a
-download-rate circuit breaker, and a verification gate — mean a bug results in a
-stopped torrent rather than a duplicate download.
-
-**Never seed the same infohash twice.** The destination is proven complete
-*before* the source stops, and the source stops *before* the destination starts.
-There is a deliberate few-second gap where neither is seeding. On a private
-tracker brief downtime is free; overlap looks like account sharing.
-
-**Never modify data.** The source library is read-only to `tsync`. Resume files
-are rewritten into a staging directory, never in place, and the original local
-copy is never deleted as part of a migration.
-
-**Byte-identical serialization.** Resume files are bencode. Decode-then-encode is
-asserted byte-identical before any rewrite is accepted, so a parser
-disagreement fails loudly instead of silently corrupting a torrent.
-
-**Verify against the swarm, not against the source.** Copies are validated by
-hashing against the piece hashes in the torrent metadata — an independent
-authority — rather than by comparing source to destination, which only proves
-the two agree.
+`fetch` copies data back and never adds it to a client.
+`migrate` runs steps 3–6 as one command. Dest stays paused unless you pass `--handoff`.
 
 ---
 
-## Requirements
+## Use it in this order
 
-- GNU `rsync` 3.1 or newer on both ends. **macOS ships `openrsync`, which will
-  not work.** `brew install rsync` puts the real binary on disk; it must also
-  come first on `PATH` (Homebrew does not replace `/usr/bin/rsync`).
-- SSH **key** access to the destination. A password prompt will hang an
-  unattended `rsync` / `tsync` run. Copy-paste key setup is
-  [docs/setup.md §4](docs/setup.md#4-ssh-key-access-to-the-destination).
-- A supported client. qBittorrent 4.x and 5.x today; the client layer is an
-  interface, and adding another is a contained change.
-
-Run `tsync doctor` before anything else. It probes for capabilities rather than
-parsing version strings, and every failure it reports comes with the exact
-command that fixes it. Copy-paste setup for the local toolchain, SSH keys, and
-the PATH trap on macOS is in [docs/setup.md](docs/setup.md).
-
-`tsync transfer` copies only the planned files (not a folder walk) with GNU
-rsync. `--to` is the save-path root the destination client will use, same as
-`plan` / `rewrite`. When that path is not where the host stores bytes — Docker
-`/data` on the container, `/opt/seedbox/data` on the box — pass both:
+Passwords come from the environment, never the command line.
 
 ```bash
+export QBT_PASSWORD          # dest WebUI
+export QBT_SOURCE_PASSWORD   # laptop WebUI, if different
+
+tsync doctor
+
+tsync audit
+tsync plan --to /data
+tsync rewrite --to /data --staging /tmp/tsync-staging
+
+# --to is the path the dest *client* sees (Docker often /data).
+# --rsync-to is where the bytes actually land.
 tsync transfer --to /data --rsync-to seedbox:/opt/seedbox/data
-```
 
-`--rsync-to` is a local path or `host:/abs/path` over SSH (`BatchMode=yes`).
-Re-running resumes; rsync skips files that already match.
+# Leave dest paused. Re-run transfer if it stops; rsync resumes.
+tsync import --url http://127.0.0.1:8080 --username admin \
+  --staging /tmp/tsync-staging --source-url http://127.0.0.1:8081 \
+  --source-password-env QBT_SOURCE_PASSWORD
 
-`tsync import` talks to a destination qBittorrent WebUI. It adds each staged
-`.torrent` paused, with a stop-after-check condition, then force-rechecks. A
-1 byte/s download limit is applied for the duration and restored afterwards.
-The password is read from `QBT_PASSWORD` — never from the command line.
+tsync verify --url http://127.0.0.1:8080 --username admin \
+  --staging /tmp/tsync-staging
+# expect: ready = every torrent, checking = 0, failed = 0
+# if checking > 0, wait and run verify again
 
-```bash
-export QBT_PASSWORD
-tsync import --url http://127.0.0.1:8080 --staging /tmp/tsync-staging \
-  --username admin --source-url http://127.0.0.1:8080
-```
-
-`--source-url` is the dual-seed guard. If the source is still seeding those
-hashes, import refuses. Do not point `--url` at a client that is still seeding
-the same torrents.
-
-`tsync verify` is the gate after import: every staged hash must be
-piece-complete and still stopped. Seeding on the destination fails unless you
-pass `--allow-seeding` (after handoff). It does not announce, and it does not
-check a public listen port.
-
-```bash
-export QBT_PASSWORD
-tsync verify --url http://127.0.0.1:8080 --staging /tmp/tsync-staging \
-  --username admin
-```
-
-`tsync handoff` is the only command that starts the destination. It stops each
-source hash, confirms the source is silent, then starts that hash on dest.
-Without `--source-url` it only reports which dest torrents are ready. Pass
-`--confirm` only after you have stopped the source yourself.
-
-```bash
-export QBT_PASSWORD
-export QBT_SOURCE_PASSWORD
 tsync handoff --url http://127.0.0.1:8080 --source-url http://127.0.0.1:8081 \
   --staging /tmp/tsync-staging --username admin \
   --source-password-env QBT_SOURCE_PASSWORD
 ```
 
-Do not Start dest torrents in the WebUI. Handoff is what starts them.
-
-`tsync fetch` copies data back. It never adds torrents to a local client, so
-the remote can keep seeding. Incomplete torrents are skipped unless you pass
-`--partial complete-files` or `--partial all`.
+Same thing as one command, still **paused** at the end:
 
 ```bash
-export QBT_PASSWORD
+tsync migrate --to /data --rsync-to seedbox:/opt/seedbox/data \
+  --staging /tmp/tsync-staging --url http://127.0.0.1:8080 \
+  --source-url http://127.0.0.1:8081 --username admin \
+  --source-password-env QBT_SOURCE_PASSWORD
+```
+
+Add `--handoff` to migrate only after you are ready for dest to announce.
+
+`--max-torrents N` on transfer / import / verify / handoff is a smallest-N
+pilot. Drop it for the full library.
+
+---
+
+## What tsync will refuse
+
+| You try to… | What happens |
+|---|---|
+| `handoff` while dest is missing, checking, or incomplete | Dest is **not** started. Transfer or recheck first. |
+| `handoff` while dest is downloading | Dest is **not** started. |
+| `handoff` while both clients are seeding the same hash | Neither client is touched. |
+| `handoff` with `--source-url` and source still seeds after stop | Dest is **not** started. |
+| `migrate --handoff` when verify is not all `ready` | Stops at verify. Dest is **not** started. |
+| `import` when dest is already seeding a hash the source still announces | Refused (dual-seed). Adding **paused** while the laptop still seeds is allowed. |
+
+`handoff` is the only tsync command that starts dest. It does **not** look at
+an rsync progress bar. It asks the dest client: is this hash piece-complete
+and stopped? A half-finished `transfer` fails that check.
+
+**tsync cannot stop a Start click in the dest WebUI.** If you press Start
+there during a copy, dest can announce while the laptop still seeds. Do not
+do that. Leave dest paused until `verify` is clean and `handoff` has run.
+
+---
+
+## Also
+
+- **GNU rsync ≥ 3.1** on both ends. macOS `/usr/bin/rsync` is `openrsync` and
+  will not work. `brew install rsync` and put it first on `PATH`.
+- **SSH key** to the dest host. A password prompt hangs an unattended copy.
+- qBittorrent 4.x and 5.x. Dest WebUI on loopback + an SSH tunnel is fine.
+- `rewrite` refuses if the source client lockfile is present. Snapshot
+  `BT_backup` and pass `--bt-backup` if qBittorrent is still running.
+- `fetch` never imports. The remote keeps seeding.
+
+```bash
 tsync fetch --from seedbox:/opt/seedbox/data --to ~/Music \
   --save-root /data --url http://127.0.0.1:8080 \
   --staging /tmp/tsync-staging --username admin
 ```
 
-`tsync migrate` runs rewrite → transfer → import → verify. Dest stays paused
-unless you also pass `--handoff`.
+Rules the tool enforces: source files are read-only; resumes are rewritten
+only into staging; dest is proven complete before the source stops; the
+source is silent before dest starts.
 
-```bash
-export QBT_PASSWORD
-tsync migrate --to /data --rsync-to seedbox:/opt/seedbox/data \
-  --staging /tmp/tsync-staging --url http://127.0.0.1:8080 \
-  --source-url http://127.0.0.1:8081 --username admin
-```
-
----
-
-## Research
-
-[`research/traffic-analysis/`](research/traffic-analysis/) is an independent
-corpus on how peer-to-peer traffic is identified on a network, why encryption
-alone does not prevent identification, and what the censorship-circumvention
-literature establishes about the limits of obfuscation. It includes two working
-analysis tools.
-
-It is not used by `tsync` and has no bearing on how the tool works. It is
-published because the material is genuinely interesting and hard to find
-assembled in one place.
-
----
-
-## License
+Independent traffic-analysis notes (not used by the tool):
+[`research/traffic-analysis/`](research/traffic-analysis/).
 
 GPL-3.0. See [LICENSE](LICENSE).
