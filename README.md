@@ -22,9 +22,6 @@ Install and `PATH` checks: [docs/setup.md](docs/setup.md). Then `tsync doctor`.
 
 ## What the other machine must already have
 
-`tsync` moves a library onto a machine that is already running. It does
-not create that machine, install qBittorrent, or start a container.
-
 On the destination, before `transfer` / `import`:
 
 - **SSH key login** that works with no password prompt.

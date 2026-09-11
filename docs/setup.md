@@ -253,9 +253,8 @@ If it asks for a password, the public key is not in that account’s
 
 ## 5. The other machine
 
-`tsync` does not create the destination, install qBittorrent, or start a
-container. After [§4](#4-ssh-key-access-to-the-destination) succeeds,
-`tsync doctor` only inspects the machine you are on.
+After [§4](#4-ssh-key-access-to-the-destination) succeeds, `tsync doctor`
+only inspects the machine you are on.
 
 The destination must already have a qBittorrent 4.x or 5.x WebAPI, disk
 for the library, and GNU rsync. Dest stays paused until `handoff`. See
