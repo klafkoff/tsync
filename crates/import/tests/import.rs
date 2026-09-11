@@ -316,12 +316,11 @@ fn progress_ticks_once_per_staged_item() {
             dry_run: false,
             max_torrents: None,
         },
-        |tick| ticks.lock().expect("ticks").push((tick.done, tick.total)),
+        |tick| {
+            ticks.lock().expect("ticks").push((tick.done, tick.total));
+        },
     )
     .expect("import");
 
-    assert_eq!(
-        ticks.lock().expect("ticks").clone(),
-        vec![(1, 2), (2, 2)]
-    );
+    assert_eq!(ticks.lock().expect("ticks").clone(), vec![(1, 2), (2, 2)]);
 }

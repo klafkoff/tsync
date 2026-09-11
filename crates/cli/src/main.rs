@@ -707,8 +707,11 @@ fn verify(
         }) {
             Ok(snap) => {
                 if seen {
-                    let dt = prev_at.elapsed().as_secs_f64().max(0.001);
-                    rate = Some(snap.hashed_bytes.saturating_sub(prev_hashed) as f64 / dt);
+                    let dt_ms = u64::try_from(prev_at.elapsed().as_millis())
+                        .unwrap_or(1)
+                        .max(1);
+                    let delta = snap.hashed_bytes.saturating_sub(prev_hashed);
+                    rate = Some(delta.saturating_mul(1000) / dt_ms);
                 }
                 seen = true;
                 prev_hashed = snap.hashed_bytes;
@@ -1013,7 +1016,7 @@ fn live_line(command: &str, done: usize, total: usize, id: &str, verb: &str) {
     if io::stderr().is_terminal() {
         eprint!("\r{command}: {done:>3}/{total}  {verb}  {short}    ");
         let _ = io::stderr().flush();
-    } else if done == 1 || done == total || done % 10 == 0 {
+    } else if done == 1 || done == total || done.is_multiple_of(10) {
         eprintln!("{command}: {done}/{total}  {verb}  {short}");
     }
 }

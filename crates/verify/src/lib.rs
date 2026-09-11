@@ -227,40 +227,32 @@ impl Watch {
 
     /// Same as [`Self::render`], with an optional hash rate from the caller.
     #[must_use]
-    pub fn render_rate(&self, bytes_per_sec: Option<f64>) -> String {
+    pub fn render_rate(&self, bytes_per_sec: Option<u64>) -> String {
         let mut out = String::from("tsync verify — dest recheck\n\n");
         let total = self.report.ready
             + self.report.checking
             + self.report.failed.len()
             + self.report.missing;
-        let torrent_frac = if total == 0 {
-            0.0
-        } else {
-            self.report.ready as f64 / total as f64
-        };
-        let byte_frac = if self.total_bytes == 0 {
-            0.0
-        } else {
-            self.hashed_bytes as f64 / self.total_bytes as f64
-        };
+        let torrent_numer = u64::try_from(self.report.ready).unwrap_or(u64::MAX);
+        let torrent_denom = u64::try_from(total).unwrap_or(u64::MAX);
         let _ = writeln!(
             out,
             "  torrents  {}  {:>3}/{}  ready",
-            bar(torrent_frac, 24),
+            ratio_bar(torrent_numer, torrent_denom, 24),
             self.report.ready,
             total
         );
         let _ = writeln!(
             out,
             "  bytes     {}  {} / {}",
-            bar(byte_frac, 24),
+            ratio_bar(self.hashed_bytes, self.total_bytes, 24),
             format_bytes(self.hashed_bytes),
             format_bytes(self.total_bytes)
         );
-        if let Some(rate) = bytes_per_sec.filter(|rate| *rate > 0.0) {
+        if let Some(rate) = bytes_per_sec.filter(|rate| *rate > 0) {
             let _ = writeln!(out, "  rate      {}", format_rate(rate));
-            if self.hashed_bytes < self.total_bytes {
-                let left = (self.total_bytes - self.hashed_bytes) as f64 / rate;
+            if self.hashed_bytes < self.total_bytes && rate > 0 {
+                let left = (self.total_bytes - self.hashed_bytes) / rate;
                 let _ = writeln!(out, "  eta       {}", format_secs(left));
             }
         }
@@ -281,7 +273,7 @@ impl Watch {
                     out,
                     "  {:<14} {}  {:>3.0}%  {}",
                     short_id(&item.id),
-                    bar(item.progress, 20),
+                    ratio_bar(progress_permille(item.progress), 1000, 20),
                     item.progress * 100.0,
                     format_bytes(item.size)
                 );
@@ -296,28 +288,46 @@ impl Watch {
 }
 
 fn hashed_and_total(torrent: &Torrent) -> (u64, u64) {
+    let permille = progress_permille(torrent.progress);
     let total = if torrent.size > 0 {
         torrent.size
-    } else if torrent.progress >= 1.0 {
+    } else if permille >= 1000 {
         torrent.completed
-    } else if torrent.progress <= f64::EPSILON {
+    } else if permille == 0 {
         torrent.amount_left
     } else {
-        ((torrent.amount_left as f64) / (1.0 - torrent.progress)).round() as u64
+        torrent.amount_left.saturating_mul(1000) / (1000 - permille)
     };
     let hashed = if torrent.completed > 0 {
         torrent.completed.min(total)
     } else if total == 0 {
         0
     } else {
-        (torrent.progress.clamp(0.0, 1.0) * total as f64).round() as u64
+        total.saturating_mul(permille) / 1000
     };
     (hashed, total)
 }
 
-fn bar(progress: f64, width: usize) -> String {
+/// qBittorrent reports `progress` as 0.0–1.0. Thousandths keep bar math
+/// in integers.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)]
+fn progress_permille(progress: f64) -> u64 {
+    (progress.clamp(0.0, 1.0) * 1000.0).round() as u64
+}
+
+fn ratio_bar(numer: u64, denom: u64, width: usize) -> String {
     let width = width.max(1);
-    let filled = ((progress.clamp(0.0, 1.0) * width as f64).round() as usize).min(width);
+    let filled = if denom == 0 {
+        0
+    } else {
+        let width_u = u32::try_from(width).unwrap_or(u32::MAX);
+        let cells = (u128::from(numer) * u128::from(width_u)) / u128::from(denom);
+        usize::try_from(cells).unwrap_or(width).min(width)
+    };
     format!("[{}{}]", "#".repeat(filled), "-".repeat(width - filled))
 }
 
@@ -338,12 +348,11 @@ fn format_bytes(n: u64) -> String {
     }
 }
 
-fn format_rate(bytes_per_sec: f64) -> String {
-    format!("{}/s", format_bytes(bytes_per_sec.round() as u64))
+fn format_rate(bytes_per_sec: u64) -> String {
+    format!("{}/s", format_bytes(bytes_per_sec))
 }
 
-fn format_secs(secs: f64) -> String {
-    let secs = secs.max(0.0) as u64;
+fn format_secs(secs: u64) -> String {
     if secs >= 3600 {
         format!("{}h {:02}m", secs / 3600, (secs % 3600) / 60)
     } else if secs >= 60 {

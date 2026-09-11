@@ -484,7 +484,12 @@ fn progress_ticks_once_per_candidate() {
             dry_run: false,
             max_torrents: None,
         },
-        |tick| ticks.lock().expect("ticks").push((tick.done, tick.total, tick.started)),
+        |tick| {
+            ticks
+                .lock()
+                .expect("ticks")
+                .push((tick.done, tick.total, tick.started));
+        },
     )
     .expect("handoff");
 
