@@ -31,7 +31,13 @@ On the destination, before `transfer` / `import`:
   loopback and reached through an SSH tunnel is fine.
 - **Disk and a save path** the dest client uses. `--to` is that client
   path. `--rsync-to` is where the bytes land on the host if those two
-  paths are not the same.
+  paths are not the same. The dest client's *default* save path for
+  new torrents must be that same root (container images often default
+  to `/downloads`, which is not the library). After `transfer`, the
+  dest tree is owned by whatever uid the source OS used (macOS, Linux,
+  or Windows). Make it writable by the dest client user before dest
+  tries to create files there. Existing complete torrents can still
+  seed read-only.
 - **Dest stays paused.** Do not Start torrents there until `handoff`.
 
 How you installed that client is outside this tool. Build and `PATH`
@@ -56,6 +62,9 @@ tsync rewrite --to /data --staging /tmp/tsync-staging
 # --to is the save path the dest client uses.
 # --rsync-to is where the bytes land on the other machine.
 tsync transfer --to /data --rsync-to seedbox:/opt/seedbox/data
+# After the copy: dest data dir must be writable by the dest client
+# user (rsync keeps the source machine's uid). Default save path on
+# dest must be /data, not an image default like /downloads.
 
 # Leave dest paused. Re-run transfer if it stops; rsync resumes.
 # transfer prints GNU rsync progress2 as it copies.

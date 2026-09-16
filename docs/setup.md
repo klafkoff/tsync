@@ -260,6 +260,17 @@ The destination must already have a qBittorrent 4.x or 5.x WebAPI, disk
 for the library, and GNU rsync. Dest stays paused until `handoff`. See
 the contract in the [README](../README.md#what-the-other-machine-must-already-have).
 
+Two dest settings that are not the copy itself:
+
+- The dest client's default save path for **new** torrents must be the
+  same root you pass as `--to` (often `/data`). qBittorrent 5 reads
+  `Session\DefaultSavePath`. Image defaults such as `/downloads` are
+  a different directory and often are not mounted.
+- `transfer` is rsync. It keeps the source machine's file ownership
+  (macOS, Linux, or Windows). The dest client may run as another user
+  (a container `PUID`). After the copy, `chown` the dest tree to that
+  user. Complete torrents can seed without write. A new add cannot.
+
 GNU rsync on the far side, when transfers start:
 
 ```bash

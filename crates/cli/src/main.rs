@@ -70,7 +70,9 @@ enum Commands {
     },
     /// Copy torrent content with rsync. Source files are never modified.
     Transfer {
-        /// Destination save-path root the client will use (same as `plan` / `rewrite`).
+        /// Destination save-path root the dest client uses for new torrents too
+        /// (same as `plan` / `rewrite`). After copy, that tree must be writable
+        /// by the dest client user — rsync keeps the source OS uid.
         #[arg(long)]
         to: PathBuf,
         /// Where the bytes go. Local path, or `host:/abs/path` over SSH.
